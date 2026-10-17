@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Leestn</string>
+    <string name="widget_now_desc">Now playing with play, pause and skip</string>
+    <string name="widget_mini_desc">Compact play and pause button with cover art</string>
+    <string name="widget_continue_desc">Episodes you started, ready to resume</string>
+    <string name="widget_new_desc">New episodes from your subscriptions</string>
+    <string name="widget_stats_desc">Your listening stats for the year</string>
+</resources>

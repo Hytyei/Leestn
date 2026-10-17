@@ -1,0 +1,2 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+INVITE_KEY=change-me

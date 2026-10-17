@@ -1,0 +1,40 @@
+name = "leestn-api"
+main = "src/index.ts"
+compatibility_date = "2025-02-14"
+
+# Run `npx wrangler d1 create leestn` once and paste the database_id it prints here.
+[[d1_databases]]
+binding = "DB"
+database_name = "leestn"
+database_id = "02f593c4-e232-466e-839e-c6277a592eb9"
+migrations_dir = "migrations"
+
+# Speech recognition for generated transcripts (Whisper).
+[ai]
+binding = "AI"
+
+# One queue message per slice of audio. Create it once: `npx wrangler queues create leestn-transcribe`
+[[queues.producers]]
+binding = "TRANSCRIBE"
+queue = "leestn-transcribe"
+
+[[queues.consumers]]
+queue = "leestn-transcribe"
+max_batch_size = 1
+max_retries = 3
+max_batch_timeout = 2
+
+[vars]
+# Limit how many new transcription jobs may start per day across all users. Whisper costs money past the free tier.
+MAX_TRANSCRIPTS_PER_DAY = "40"
+# Limit per person, so one friend can't use up everyone's share.
+MAX_PER_USER_PER_DAY = "8"
+# Slice size in bytes. About 65 seconds of a 128 kbps MP3.
+CHUNK_BYTES = "1048576"
+# Refuse audio files larger than this many megabytes.
+MAX_AUDIO_MB = "150"
+# Set to your site or "*" to allow browsers. The Android app doesn't need CORS.
+ALLOW_ORIGIN = "*"
+
+# Secrets (never put these in this file):
+#   npx wrangler secret put INVITE_KEY
