@@ -1,6 +1,7 @@
 import type { ChunkJob, Env, Segment } from "./types";
 import { HttpError, bytesToBase64, int, json, str, body } from "./util";
 import { member } from "./users";
+import { Unsupported, buildAdts, findMoov, isAdts, plan as planAac, type AacInfo, type Slice } from "./mp4";
 
 const MODEL = "@cf/openai/whisper-large-v3-turbo";
 const MAX_ATTEMPTS = 3;
@@ -49,26 +50,66 @@ function checkAudioUrl(raw: string): URL {
   return u;
 }
 
-async function probe(url: string): Promise<{ size: number; type: string }> {
-  const headers = { "user-agent": "LeestnTranscriber/0.4" };
+const UA = { "user-agent": "LeestnTranscriber/1.0" };
+
+/** Reads bytes [from, to) of a file. Throws if the host ignores range requests for a later part of the file. */
+async function readRange(url: string, from: number, to: number): Promise<Uint8Array> {
+  const r = await fetch(url, { headers: { ...UA, range: `bytes=${from}-${to - 1}` }, redirect: "follow" });
+  if (r.status === 200 && from > 0) {
+    await r.body?.cancel();
+    throw new HttpError(422, "The audio host does not support range requests");
+  }
+  if (r.status !== 200 && r.status !== 206) throw new Error(`Audio fetch failed: ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer()).subarray(0, to - from);
+}
+
+type Kind = "mp3" | "adts" | "mp4" | "unsupported";
+
+/** Looks at the first bytes of the file, because the URL and content type are often wrong. */
+function sniff(head: Uint8Array, type: string, url: string): { kind: Kind; why?: string } {
+  const s = (o: number, n: number) => String.fromCharCode(...head.subarray(o, o + n));
+  if (s(0, 3) === "ID3") return { kind: "mp3" };
+  if (isAdts(head)) return { kind: "adts" };
+  if (head[0] === 0xff && (head[1] & 0xe0) === 0xe0) return { kind: "mp3" };
+  if (s(4, 4) === "ftyp") return { kind: "mp4" };
+  if (s(0, 4) === "OggS") return { kind: "unsupported", why: "Ogg/Opus audio" };
+  if (s(0, 4) === "RIFF") return { kind: "unsupported", why: "WAV audio" };
+  if (s(0, 4) === "fLaC") return { kind: "unsupported", why: "FLAC audio" };
+  if (/mp4|m4a|aac/i.test(type) || /\.(m4a|mp4)(\?|$)/i.test(url)) return { kind: "mp4" };
+  return { kind: "mp3" }; // unknown: try it as MP3, like before
+}
+
+async function probe(url: string): Promise<{ size: number; type: string; head: Uint8Array }> {
   let size = 0;
   let type = "";
+  let head = new Uint8Array(0);
   try {
-    const head = await fetch(url, { method: "HEAD", redirect: "follow", headers });
-    size = int(head.headers.get("content-length"), 0);
-    type = head.headers.get("content-type") || "";
+    const r = await fetch(url, { headers: { ...UA, range: "bytes=0-15" }, redirect: "follow" });
+    type = r.headers.get("content-type") || "";
+    const m = /\/(\d+)$/.exec(r.headers.get("content-range") || "");
+    if (r.status === 206 && m) size = parseInt(m[1], 10);
+    else if (r.status === 200) size = int(r.headers.get("content-length"), 0);
+    if (r.status === 200 || r.status === 206) {
+      const reader = r.body?.getReader();
+      const parts: number[] = [];
+      while (reader && parts.length < 16) {
+        const { done, value } = await reader.read();
+        if (done || !value) break;
+        for (const b of value) if (parts.length < 16) parts.push(b);
+      }
+      await reader?.cancel();
+      head = new Uint8Array(parts);
+    }
   } catch {
-    /* fall through to the range probe */
+    /* fall through to HEAD */
   }
   if (!size) {
-    const r = await fetch(url, { headers: { ...headers, range: "bytes=0-0" }, redirect: "follow" });
-    const m = /\/(\d+)$/.exec(r.headers.get("content-range") || "");
-    if (m) size = parseInt(m[1], 10);
-    type = type || r.headers.get("content-type") || "";
-    await r.body?.cancel();
+    const h = await fetch(url, { method: "HEAD", redirect: "follow", headers: UA });
+    size = int(h.headers.get("content-length"), 0);
+    type = type || h.headers.get("content-type") || "";
   }
   if (!size) throw new HttpError(422, "Could not read the audio size. The host must support range requests.");
-  return { size, type };
+  return { size, type, head };
 }
 
 export async function getTranscript(env: Env, req: Request, epId: string): Promise<Response> {
@@ -99,15 +140,31 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
   const mine = await env.DB.prepare("SELECT COUNT(*) AS n FROM transcripts WHERE requested_by = ? AND created_at >= ?").bind(requester, dayStart).first<{ n: number }>();
   if ((mine?.n ?? 0) >= perUser) throw new HttpError(429, `You have used your ${perUser} transcripts for today. Try again tomorrow.`);
 
-  const { size, type } = await probe(audioUrl);
-  if (/mp4|m4a|aac|x-m4a/i.test(type) || /\.(m4a|mp4|aac)(\?|$)/i.test(audioUrl)) {
-    throw new HttpError(422, "This episode is an M4A/AAC file, which can't be split for transcription yet. MP3 works.");
-  }
+  const { size, type, head } = await probe(audioUrl);
   const maxBytes = int(env.MAX_AUDIO_MB, 150, 1) * 1024 * 1024;
   if (size > maxBytes) throw new HttpError(413, `Audio is larger than ${env.MAX_AUDIO_MB} MB`);
+  const found = sniff(head, type, audioUrl);
+  if (found.kind === "unsupported") {
+    throw new HttpError(422, `This episode is ${found.why}, which can't be transcribed yet. MP3 and M4A (AAC) work.`);
+  }
 
   const chunkBytes = int(env.CHUNK_BYTES, 1_048_576, 65_536, 4 * 1024 * 1024);
-  const total = Math.max(1, Math.ceil(size / chunkBytes));
+  let messages: ChunkJob[];
+  if (found.kind === "mp4") {
+    try {
+      const at = await findMoov(size, (from, to) => readRange(audioUrl, from, to));
+      const moov = await readRange(audioUrl, at.from, at.to);
+      const p = planAac(moov, chunkBytes);
+      messages = p.slices.map((s, idx) => ({ epId, idx, aac: { t0: s.t0, runs: s.runs, ...p.aac, channels: p.aac.channels } }));
+    } catch (e) {
+      if (e instanceof Unsupported) throw new HttpError(422, e.message);
+      throw e;
+    }
+  } else {
+    const n = Math.max(1, Math.ceil(size / chunkBytes));
+    messages = Array.from({ length: n }, (_, idx) => (found.kind === "adts" ? { epId, idx, fmt: "adts" as const } : { epId, idx }));
+  }
+  const total = messages.length;
   const now = Date.now();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM transcript_chunks WHERE ep_id = ?").bind(epId),
@@ -120,8 +177,20 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
     ).bind(epId, total, audioUrl, durationSec, requester, now, now),
   ]);
 
-  const jobs = Array.from({ length: total }, (_, idx) => ({ body: { epId, idx } as ChunkJob }));
-  for (let i = 0; i < jobs.length; i += 100) await env.TRANSCRIBE.sendBatch(jobs.slice(i, i + 100));
+  // Queue limits: 100 messages and 256 KB per batch. M4A messages carry frame sizes, so batch by size too.
+  let batch: { body: ChunkJob }[] = [];
+  let batchBytes = 0;
+  for (const m of messages) {
+    const len = JSON.stringify(m).length;
+    if (batch.length >= 50 || batchBytes + len > 200_000) {
+      await env.TRANSCRIBE.sendBatch(batch);
+      batch = [];
+      batchBytes = 0;
+    }
+    batch.push({ body: m });
+    batchBytes += len;
+  }
+  if (batch.length) await env.TRANSCRIBE.sendBatch(batch);
   return json(env, { status: "queued", progress: 0, lines: [] }, 202);
 }
 
@@ -131,22 +200,36 @@ async function fail(env: Env, epId: string, message: string) {
     .run();
 }
 
-async function transcribeChunk(env: Env, row: Row, idx: number): Promise<void> {
+/** Gets the audio of one piece as bytes Whisper can decode, plus where the piece starts and how long it is, in seconds. */
+async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint8Array; offset: number; span: number }> {
   const chunkBytes = int(env.CHUNK_BYTES, 1_048_576, 65_536, 4 * 1024 * 1024);
-  const from = idx * chunkBytes;
-  const r = await fetch(row.audio_url, {
-    headers: { range: `bytes=${from}-${from + chunkBytes - 1}`, "user-agent": "LeestnTranscriber/0.4" },
-    redirect: "follow",
-  });
-  if (r.status === 200 && idx > 0) throw new HttpError(422, "The audio host does not support range requests");
-  if (r.status !== 200 && r.status !== 206) throw new Error(`Audio fetch failed: ${r.status}`);
-  const bytes = new Uint8Array(await r.arrayBuffer()).subarray(0, chunkBytes);
+  const read = (from: number, to: number) => readRange(row.audio_url, from, to);
+  if (job.aac) {
+    const a: AacInfo = { profile: job.aac.profile, sfi: job.aac.sfi, channels: job.aac.channels };
+    const slice: Slice = { t0: job.aac.t0, runs: job.aac.runs };
+    const bytes = await buildAdts(slice, a, read);
+    const frames = slice.runs.reduce((n, r) => n + r[1].length, 0);
+    const rate = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350][a.sfi] ?? 44100;
+    return { bytes, offset: slice.t0, span: (frames * 1024) / rate };
+  }
+  // MP3 and raw AAC: a byte range. Timing is estimated from the episode length (or a 128 kbps guess).
+  const from = job.idx * chunkBytes;
+  let bytes = await read(from, from + chunkBytes);
+  if (job.fmt === "adts") {
+    // start at the first complete frame
+    let i = 0;
+    while (i + 1 < bytes.length && !isAdts(bytes.subarray(i))) i++;
+    bytes = bytes.subarray(i);
+  }
+  const span = row.duration_sec > 0 ? row.duration_sec / row.chunks_total : (chunkBytes * 8) / 128_000;
+  return { bytes, offset: job.idx * span, span };
+}
+
+async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void> {
+  const idx = job.idx;
+  const { bytes, offset, span: exactPerChunk } = await pieceOf(env, row, job);
 
   const out: any = await (env.AI as any).run(MODEL, { audio: bytesToBase64(bytes) });
-
-  // Seconds covered by one slice: from the known duration, else assume a 128 kbps MP3.
-  const exactPerChunk = row.duration_sec > 0 ? row.duration_sec / row.chunks_total : (chunkBytes * 8) / 128_000;
-  const offset = idx * exactPerChunk;
 
   const segs: Segment[] = [];
   if (Array.isArray(out?.segments) && out.segments.length) {
@@ -198,7 +281,7 @@ export async function consume(batch: MessageBatch<ChunkJob>, env: Env): Promise<
         msg.ack();
         continue;
       }
-      await transcribeChunk(env, row, idx);
+      await transcribeChunk(env, row, msg.body);
       msg.ack();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

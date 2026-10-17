@@ -44,3 +44,6 @@ local.properties
 # Signing credentials
 *.jks
 *.keystore
+
+# Local release backups
+backups/

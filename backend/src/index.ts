@@ -11,7 +11,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   const m = req.method;
   let r: RegExpMatchArray | null;
 
-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.0.0-pre.1" });
+  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.0.0-pre.2" });
 
   // Transcripts (invite key or account token)
   if (p === "/v1/transcripts" && m === "POST") return requestTranscript(env, req);

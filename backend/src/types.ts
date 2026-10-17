@@ -14,6 +14,16 @@ export interface Env {
 export interface ChunkJob {
   epId: string;
   idx: number;
+  /** Present for M4A/MP4 audio: which frames make up this piece. Messages without it are MP3 byte ranges. */
+  aac?: {
+    t0: number;
+    runs: [number, number[]][];
+    profile: number;
+    sfi: number;
+    channels: number;
+  };
+  /** Raw AAC (ADTS) files are cut at byte positions like MP3. */
+  fmt?: "adts";
 }
 
 export interface Segment {

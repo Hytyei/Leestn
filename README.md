@@ -70,8 +70,10 @@ Whisper large-v3-turbo on Workers AI costs about $0.0005 per audio minute. The f
 
 ### Limits
 
-- Audio is cut into 1 MB slices, which works for MP3. M4A/AAC episodes are refused with a message.
-- Timestamps come from the slice position and the episode length, so they can drift a few seconds.
+- **MP3** is cut into 1 MB slices by byte position. Timestamps come from the slice position and the episode length, so they can drift a few seconds.
+- **M4A/MP4 with AAC audio** is read properly: the Worker finds the file's index, cuts the audio between frames, and sends each piece as plain AAC. Timestamps are exact. HE-AAC is best effort.
+- **Raw .aac** files work like MP3. **Ogg/Opus, WAV, FLAC, video files and non-AAC audio** are refused with a message that names the format.
+- The file's real format is detected from its first bytes, so a wrong file extension or content type doesn't matter.
 - The host must support HTTP range requests (almost all do).
 
 ### API
@@ -103,6 +105,6 @@ Local development: `cp .dev.vars.example .dev.vars`, `npm run db:migrate:local`,
 
 ## Status of this pre-release
 
-The Worker is tested end to end with a fake Whisper and an in-memory database (accounts, sync, follow, feed, ratings, avatars, chunked transcripts, limits). **The Android app has not been compiled or run by its author's tooling**, and the live Whisper model, Apple's directory and Spotify's lookup have not been called from it. Expect build errors and rough edges, and please report them.
+The Worker is tested end to end (including M4A files built for the test) with a fake Whisper and an in-memory database (accounts, sync, follow, feed, ratings, avatars, chunked transcripts, limits). **The Android app has not been compiled or run by its author's tooling**, and the live Whisper model, Apple's directory and Spotify's lookup have not been called from it. Expect build errors and rough edges, and please report them.
 
 Known gaps: the APK is a debug build (not signed for the Play Store); the system font is used instead of Bricolage Grotesque, DM Sans and IBM Plex Mono; friends are found by username search only.
