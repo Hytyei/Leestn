@@ -52,14 +52,22 @@ function checkAudioUrl(raw: string): URL {
 
 const UA = { "user-agent": "LeestnTranscriber/1.0" };
 
-/** Reads bytes [from, to) of a file. Throws if the host ignores range requests for a later part of the file. */
+const hostOf = (url: string) => { try { return new URL(url).hostname; } catch { return "the audio host"; } };
+
+/** Reads bytes [from, to) of a file. Throws a clear error if the host refuses us or ignores range requests. */
 async function readRange(url: string, from: number, to: number): Promise<Uint8Array> {
   const r = await fetch(url, { headers: { ...UA, range: `bytes=${from}-${to - 1}` }, redirect: "follow" });
   if (r.status === 200 && from > 0) {
     await r.body?.cancel();
-    throw new HttpError(422, "The audio host does not support range requests");
+    throw new HttpError(422, `${hostOf(url)} doesn't allow reading the audio in parts (no range support), so this episode can't be transcribed.`);
   }
-  if (r.status !== 200 && r.status !== 206) throw new Error(`Audio fetch failed: ${r.status}`);
+  if (r.status !== 200 && r.status !== 206) {
+    await r.body?.cancel();
+    if ([401, 403, 404, 410, 451].includes(r.status)) {
+      throw new HttpError(422, `${hostOf(url)} refused the server's request for the audio (HTTP ${r.status}). Some hosts block automated downloads.`);
+    }
+    throw new Error(`Audio fetch failed: HTTP ${r.status} from ${hostOf(url)}`);
+  }
   return new Uint8Array(await r.arrayBuffer()).subarray(0, to - from);
 }
 
@@ -82,9 +90,11 @@ function sniff(head: Uint8Array, type: string, url: string): { kind: Kind; why?:
 async function probe(url: string): Promise<{ size: number; type: string; head: Uint8Array }> {
   let size = 0;
   let type = "";
+  let status = 0;
   let head = new Uint8Array(0);
   try {
     const r = await fetch(url, { headers: { ...UA, range: "bytes=0-15" }, redirect: "follow" });
+    status = r.status;
     type = r.headers.get("content-type") || "";
     const m = /\/(\d+)$/.exec(r.headers.get("content-range") || "");
     if (r.status === 206 && m) size = parseInt(m[1], 10);
@@ -107,8 +117,12 @@ async function probe(url: string): Promise<{ size: number; type: string; head: U
     const h = await fetch(url, { method: "HEAD", redirect: "follow", headers: UA });
     size = int(h.headers.get("content-length"), 0);
     type = type || h.headers.get("content-type") || "";
+    status = status || h.status;
   }
-  if (!size) throw new HttpError(422, "Could not read the audio size. The host must support range requests.");
+  if (!size) {
+    if ([401, 403, 404, 410, 451].includes(status)) throw new HttpError(422, `${hostOf(url)} refused the server's request for the audio (HTTP ${status}). Some hosts block automated downloads.`);
+    throw new HttpError(422, `Couldn't read the audio size from ${hostOf(url)} (HTTP ${status || "no answer"}). The host must report the file size and allow range requests.`);
+  }
   return { size, type, head };
 }
 
@@ -291,16 +305,31 @@ async function assemble(env: Env, epId: string) {
   const rows = await env.DB.prepare("SELECT segments FROM transcript_chunks WHERE ep_id = ? ORDER BY idx").bind(epId).all<{ segments: string }>();
   const lines: { t: number; text: string }[] = [];
   for (const r of rows.results) {
-    for (const s of JSON.parse(r.segments) as Segment[]) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
+    for (const s of JSON.parse(r.segments) as Segment[]) if (s.text) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
+  }
+  const skippedRows = rows.results.filter((r) => r.segments.includes('"skip"'));
+  const skipped = skippedRows.length;
+  if (skipped * 4 > rows.results.length) {
+    const why = (JSON.parse(skippedRows[0].segments)[0]?.skip as string) || "unknown error";
+    return fail(env, epId, `${skipped} of ${rows.results.length} parts couldn't be transcribed (${why})`);
   }
   if (!lines.length) return fail(env, epId, "No speech was recognised in this episode");
+  const note = skipped ? `${skipped} short part${skipped > 1 ? "s" : ""} couldn't be transcribed and ${skipped > 1 ? "are" : "is"} missing.` : null;
   await env.DB.batch([
-    env.DB.prepare("UPDATE transcripts SET status='ready', progress=1, error=NULL, lines=?, updated_at=? WHERE ep_id=?").bind(JSON.stringify(lines), Date.now(), epId),
+    env.DB.prepare("UPDATE transcripts SET status='ready', progress=1, error=?, lines=?, updated_at=? WHERE ep_id=?").bind(note, JSON.stringify(lines), Date.now(), epId),
     env.DB.prepare("DELETE FROM transcript_chunks WHERE ep_id = ?").bind(epId),
   ]);
 }
 
 /** Queue consumer: one message is one slice of one episode. */
+/** A slice that keeps failing is recorded as skipped, so one bad part doesn't lose the whole episode. */
+async function skipChunk(env: Env, row: Row, idx: number, message: string): Promise<void> {
+  const mark = JSON.stringify([{ start: 0, end: 0, text: "", skip: message.slice(0, 160) }]);
+  await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, mark).run();
+  const done = await env.DB.prepare("SELECT COUNT(*) AS n FROM transcript_chunks WHERE ep_id = ?").bind(row.ep_id).first<{ n: number }>();
+  if ((done?.n ?? 0) >= row.chunks_total) await assemble(env, row.ep_id);
+}
+
 export async function consume(batch: MessageBatch<ChunkJob>, env: Env): Promise<void> {
   for (const msg of batch.messages) {
     const { epId, idx } = msg.body;
@@ -315,8 +344,16 @@ export async function consume(batch: MessageBatch<ChunkJob>, env: Env): Promise<
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const permanent = e instanceof HttpError && e.status === 422;
-      if (permanent || msg.attempts > MAX_ATTEMPTS) {
+      if (permanent) {
         await fail(env, epId, message);
+        msg.ack();
+      } else if (msg.attempts > MAX_ATTEMPTS) {
+        try {
+          const row = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
+          if (row && row.status !== "ready" && row.status !== "failed") await skipChunk(env, row, idx, message);
+        } catch {
+          await fail(env, epId, message);
+        }
         msg.ack();
       } else {
         msg.retry({ delaySeconds: 10 * msg.attempts });

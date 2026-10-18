@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -151,10 +152,13 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
             }
             load is Load.Busy && shown.isEmpty() -> items(9) { PosterCardSkeleton(Modifier.fillMaxWidth()) }
             shown.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
-                EmptyState(
-                    if (searching) "Nothing found" else "No charts yet",
-                    if (searching) "Try another name, or add a show with a link." else "Pull the charts again in a moment.",
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    EmptyState(
+                        if (searching) "Nothing found" else "No charts yet",
+                        if (searching) "Search uses Apple's podcast directory, so new or private shows may be missing. Add yours with its RSS feed link." else "Pull the charts again in a moment.",
+                    )
+                    if (searching) ActionPill("Add by RSS or link", Icons.Rounded.Add) { dialog = true }
+                }
             }
             else -> itemsIndexed(shown, key = { _, p -> p.id }) { i, p ->
                 PosterCard(
@@ -174,7 +178,7 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.animateContentSize()) {
                     Text(
-                        "Paste an RSS feed, an Apple Podcasts link or a Spotify show link. Spotify doesn't share episode audio with other apps, so Leestn finds the show's public feed instead.",
+                        "Paste an RSS feed link (best, works for any show, including your own), a podcast website, an Apple Podcasts link or a Spotify show link. Spotify doesn't share episode audio with other apps, so for Spotify links Leestn looks the show up in Apple's directory.",
                         style = MaterialTheme.typography.bodySmall, color = LColors.Text2,
                     )
                     OutlinedTextField(

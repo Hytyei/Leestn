@@ -26,9 +26,29 @@ object Sources {
             lower.contains("open.spotify.com/show/") || lower.contains("spotify.com/show/") -> fromSpotify(text)
             lower.contains("open.spotify.com/episode/") -> throw IOException("Paste the link to the show, not a single episode")
             lower.contains("podcasts.apple.com") -> fromApple(text)
-            lower.startsWith("http://") || lower.startsWith("https://") -> Podcast(Itunes.idFor(text), "", "", "", "", feedUrl = text)
+            lower.startsWith("http://") || lower.startsWith("https://") -> {
+                val feed = findFeed(text)
+                Podcast(Itunes.idFor(feed), "", "", "", "", feedUrl = feed)
+            }
             else -> throw IOException("That doesn't look like a link")
         }
+    }
+
+    /**
+     * The link may be the feed itself or a web page (a podcast website, Castbox, Spotify for Creators…).
+     * A page usually advertises its feed in a <link rel="alternate" type="application/rss+xml"> tag, so look for that.
+     */
+    fun findFeed(url: String): String {
+        val body = try { Http.text(url, 3_000_000) } catch (e: Exception) { throw IOException("Couldn't open that link (${e.message})") }
+        val head = body.take(2000).lowercase()
+        if (head.contains("<rss") || head.contains("<feed") || head.contains("<?xml")) return url
+        val tag = Regex("<link\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(body).map { it.value }.firstOrNull {
+            it.contains("alternate", true) && (it.contains("application/rss+xml", true) || it.contains("application/atom+xml", true))
+        }
+        val href = tag?.let { Regex("href\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
+            ?.replace("&amp;", "&")
+        if (href != null) return try { java.net.URI(url).resolve(href).toString() } catch (e: Exception) { href }
+        throw IOException("That page doesn't point to a podcast feed. Paste the RSS feed link instead. In Spotify for Creators it is under Settings → Distribution → RSS.")
     }
 
     private fun fromSpotify(url: String): Podcast {
@@ -43,7 +63,7 @@ object Sources {
         val want = norm(title)
         return found.firstOrNull { norm(it.name) == want }
             ?: found.firstOrNull { norm(it.name).contains(want) || want.contains(norm(it.name)) }
-            ?: throw IOException("\"$title\" has no public feed, so it can only be played inside Spotify")
+            ?: throw IOException("\"$title\" isn't in Apple's directory, so Leestn can't find its feed from a Spotify link. If it's your own show, paste its RSS feed link instead (Spotify for Creators → Settings → Distribution → RSS). Any link works, not just Spotify's.")
     }
 
     private fun fromApple(url: String): Podcast {

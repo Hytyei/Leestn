@@ -1,0 +1,353 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index ce5df13..b82f220 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         applicationId = "app.leestn"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 15
+-        versionName = "1.5.0"
++        versionCode = 16
++        versionName = "1.5.1"
+     }
+ 
+     signingConfigs {
+diff --git a/app/src/main/java/app/leestn/data/Sources.kt b/app/src/main/java/app/leestn/data/Sources.kt
+index 2fb8cbd..8394976 100644
+--- a/app/src/main/java/app/leestn/data/Sources.kt
++++ b/app/src/main/java/app/leestn/data/Sources.kt
+@@ -26,11 +26,31 @@ object Sources {
+             lower.contains("open.spotify.com/show/") || lower.contains("spotify.com/show/") -> fromSpotify(text)
+             lower.contains("open.spotify.com/episode/") -> throw IOException("Paste the link to the show, not a single episode")
+             lower.contains("podcasts.apple.com") -> fromApple(text)
+-            lower.startsWith("http://") || lower.startsWith("https://") -> Podcast(Itunes.idFor(text), "", "", "", "", feedUrl = text)
++            lower.startsWith("http://") || lower.startsWith("https://") -> {
++                val feed = findFeed(text)
++                Podcast(Itunes.idFor(feed), "", "", "", "", feedUrl = feed)
++            }
+             else -> throw IOException("That doesn't look like a link")
+         }
+     }
+ 
++    /**
++     * The link may be the feed itself or a web page (a podcast website, Castbox, Spotify for Creators…).
++     * A page usually advertises its feed in a <link rel="alternate" type="application/rss+xml"> tag, so look for that.
++     */
++    fun findFeed(url: String): String {
++        val body = try { Http.text(url, 3_000_000) } catch (e: Exception) { throw IOException("Couldn't open that link (${e.message})") }
++        val head = body.take(2000).lowercase()
++        if (head.contains("<rss") || head.contains("<feed") || head.contains("<?xml")) return url
++        val tag = Regex("<link\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(body).map { it.value }.firstOrNull {
++            it.contains("alternate", true) && (it.contains("application/rss+xml", true) || it.contains("application/atom+xml", true))
++        }
++        val href = tag?.let { Regex("href\\s*=\\s*[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1) }
++            ?.replace("&amp;", "&")
++        if (href != null) return try { java.net.URI(url).resolve(href).toString() } catch (e: Exception) { href }
++        throw IOException("That page doesn't point to a podcast feed. Paste the RSS feed link instead. In Spotify for Creators it is under Settings → Distribution → RSS.")
++    }
++
+     private fun fromSpotify(url: String): Podcast {
+         val clean = url.substringBefore('?').substringBefore('#')
+         val title = try {
+@@ -43,7 +63,7 @@ object Sources {
+         val want = norm(title)
+         return found.firstOrNull { norm(it.name) == want }
+             ?: found.firstOrNull { norm(it.name).contains(want) || want.contains(norm(it.name)) }
+-            ?: throw IOException("\"$title\" has no public feed, so it can only be played inside Spotify")
++            ?: throw IOException("\"$title\" isn't in Apple's directory, so Leestn can't find its feed from a Spotify link. If it's your own show, paste its RSS feed link instead (Spotify for Creators → Settings → Distribution → RSS). Any link works, not just Spotify's.")
+     }
+ 
+     private fun fromApple(url: String): Podcast {
+diff --git a/app/src/main/java/app/leestn/ui/DiscoverScreen.kt b/app/src/main/java/app/leestn/ui/DiscoverScreen.kt
+index e84d78d..c596b6e 100644
+--- a/app/src/main/java/app/leestn/ui/DiscoverScreen.kt
++++ b/app/src/main/java/app/leestn/ui/DiscoverScreen.kt
+@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
+ import androidx.compose.animation.fadeIn
+ import androidx.compose.animation.fadeOut
+ import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.ui.Alignment
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.PaddingValues
+ import androidx.compose.foundation.layout.Row
+@@ -151,10 +152,13 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
+             }
+             load is Load.Busy && shown.isEmpty() -> items(9) { PosterCardSkeleton(Modifier.fillMaxWidth()) }
+             shown.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+-                EmptyState(
+-                    if (searching) "Nothing found" else "No charts yet",
+-                    if (searching) "Try another name, or add a show with a link." else "Pull the charts again in a moment.",
+-                )
++                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
++                    EmptyState(
++                        if (searching) "Nothing found" else "No charts yet",
++                        if (searching) "Search uses Apple's podcast directory, so new or private shows may be missing. Add yours with its RSS feed link." else "Pull the charts again in a moment.",
++                    )
++                    if (searching) ActionPill("Add by RSS or link", Icons.Rounded.Add) { dialog = true }
++                }
+             }
+             else -> itemsIndexed(shown, key = { _, p -> p.id }) { i, p ->
+                 PosterCard(
+@@ -174,7 +178,7 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
+             text = {
+                 Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.animateContentSize()) {
+                     Text(
+-                        "Paste an RSS feed, an Apple Podcasts link or a Spotify show link. Spotify doesn't share episode audio with other apps, so Leestn finds the show's public feed instead.",
++                        "Paste an RSS feed link (best, works for any show, including your own), a podcast website, an Apple Podcasts link or a Spotify show link. Spotify doesn't share episode audio with other apps, so for Spotify links Leestn looks the show up in Apple's directory.",
+                         style = MaterialTheme.typography.bodySmall, color = LColors.Text2,
+                     )
+                     OutlinedTextField(
+diff --git a/backend/package.json b/backend/package.json
+index 1760ecd..47e102f 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "leestn-api",
+-  "version": "1.5.0",
++  "version": "1.5.1",
+   "private": true,
+   "type": "module",
+   "scripts": {
+@@ -10,7 +10,7 @@
+     "db:migrate:local": "wrangler d1 migrations apply leestn --local",
+     "db:migrate:remote": "wrangler d1 migrations apply leestn --remote",
+     "tail": "wrangler tail",
+-    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts"
++    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts"
+   },
+   "devDependencies": {
+     "@cloudflare/workers-types": "^4.20250214.0",
+diff --git a/backend/src/index.ts b/backend/src/index.ts
+index e0b325f..d749408 100644
+--- a/backend/src/index.ts
++++ b/backend/src/index.ts
+@@ -11,7 +11,7 @@ async function route(req: Request, env: Env): Promise<Response> {
+   const m = req.method;
+   let r: RegExpMatchArray | null;
+ 
+-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.0" });
++  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.1" });
+ 
+   // Transcripts (invite key or account token)
+   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
+diff --git a/backend/src/transcripts.ts b/backend/src/transcripts.ts
+index 14ceda9..7db5749 100644
+--- a/backend/src/transcripts.ts
++++ b/backend/src/transcripts.ts
+@@ -52,14 +52,22 @@ function checkAudioUrl(raw: string): URL {
+ 
+ const UA = { "user-agent": "LeestnTranscriber/1.0" };
+ 
+-/** Reads bytes [from, to) of a file. Throws if the host ignores range requests for a later part of the file. */
++const hostOf = (url: string) => { try { return new URL(url).hostname; } catch { return "the audio host"; } };
++
++/** Reads bytes [from, to) of a file. Throws a clear error if the host refuses us or ignores range requests. */
+ async function readRange(url: string, from: number, to: number): Promise<Uint8Array> {
+   const r = await fetch(url, { headers: { ...UA, range: `bytes=${from}-${to - 1}` }, redirect: "follow" });
+   if (r.status === 200 && from > 0) {
+     await r.body?.cancel();
+-    throw new HttpError(422, "The audio host does not support range requests");
++    throw new HttpError(422, `${hostOf(url)} doesn't allow reading the audio in parts (no range support), so this episode can't be transcribed.`);
++  }
++  if (r.status !== 200 && r.status !== 206) {
++    await r.body?.cancel();
++    if ([401, 403, 404, 410, 451].includes(r.status)) {
++      throw new HttpError(422, `${hostOf(url)} refused the server's request for the audio (HTTP ${r.status}). Some hosts block automated downloads.`);
++    }
++    throw new Error(`Audio fetch failed: HTTP ${r.status} from ${hostOf(url)}`);
+   }
+-  if (r.status !== 200 && r.status !== 206) throw new Error(`Audio fetch failed: ${r.status}`);
+   return new Uint8Array(await r.arrayBuffer()).subarray(0, to - from);
+ }
+ 
+@@ -82,9 +90,11 @@ function sniff(head: Uint8Array, type: string, url: string): { kind: Kind; why?:
+ async function probe(url: string): Promise<{ size: number; type: string; head: Uint8Array }> {
+   let size = 0;
+   let type = "";
++  let status = 0;
+   let head = new Uint8Array(0);
+   try {
+     const r = await fetch(url, { headers: { ...UA, range: "bytes=0-15" }, redirect: "follow" });
++    status = r.status;
+     type = r.headers.get("content-type") || "";
+     const m = /\/(\d+)$/.exec(r.headers.get("content-range") || "");
+     if (r.status === 206 && m) size = parseInt(m[1], 10);
+@@ -107,8 +117,12 @@ async function probe(url: string): Promise<{ size: number; type: string; head: U
+     const h = await fetch(url, { method: "HEAD", redirect: "follow", headers: UA });
+     size = int(h.headers.get("content-length"), 0);
+     type = type || h.headers.get("content-type") || "";
++    status = status || h.status;
++  }
++  if (!size) {
++    if ([401, 403, 404, 410, 451].includes(status)) throw new HttpError(422, `${hostOf(url)} refused the server's request for the audio (HTTP ${status}). Some hosts block automated downloads.`);
++    throw new HttpError(422, `Couldn't read the audio size from ${hostOf(url)} (HTTP ${status || "no answer"}). The host must report the file size and allow range requests.`);
+   }
+-  if (!size) throw new HttpError(422, "Could not read the audio size. The host must support range requests.");
+   return { size, type, head };
+ }
+ 
+@@ -291,16 +305,31 @@ async function assemble(env: Env, epId: string) {
+   const rows = await env.DB.prepare("SELECT segments FROM transcript_chunks WHERE ep_id = ? ORDER BY idx").bind(epId).all<{ segments: string }>();
+   const lines: { t: number; text: string }[] = [];
+   for (const r of rows.results) {
+-    for (const s of JSON.parse(r.segments) as Segment[]) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
++    for (const s of JSON.parse(r.segments) as Segment[]) if (s.text) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
++  }
++  const skippedRows = rows.results.filter((r) => r.segments.includes('"skip"'));
++  const skipped = skippedRows.length;
++  if (skipped * 4 > rows.results.length) {
++    const why = (JSON.parse(skippedRows[0].segments)[0]?.skip as string) || "unknown error";
++    return fail(env, epId, `${skipped} of ${rows.results.length} parts couldn't be transcribed (${why})`);
+   }
+   if (!lines.length) return fail(env, epId, "No speech was recognised in this episode");
++  const note = skipped ? `${skipped} short part${skipped > 1 ? "s" : ""} couldn't be transcribed and ${skipped > 1 ? "are" : "is"} missing.` : null;
+   await env.DB.batch([
+-    env.DB.prepare("UPDATE transcripts SET status='ready', progress=1, error=NULL, lines=?, updated_at=? WHERE ep_id=?").bind(JSON.stringify(lines), Date.now(), epId),
++    env.DB.prepare("UPDATE transcripts SET status='ready', progress=1, error=?, lines=?, updated_at=? WHERE ep_id=?").bind(note, JSON.stringify(lines), Date.now(), epId),
+     env.DB.prepare("DELETE FROM transcript_chunks WHERE ep_id = ?").bind(epId),
+   ]);
+ }
+ 
+ /** Queue consumer: one message is one slice of one episode. */
++/** A slice that keeps failing is recorded as skipped, so one bad part doesn't lose the whole episode. */
++async function skipChunk(env: Env, row: Row, idx: number, message: string): Promise<void> {
++  const mark = JSON.stringify([{ start: 0, end: 0, text: "", skip: message.slice(0, 160) }]);
++  await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, mark).run();
++  const done = await env.DB.prepare("SELECT COUNT(*) AS n FROM transcript_chunks WHERE ep_id = ?").bind(row.ep_id).first<{ n: number }>();
++  if ((done?.n ?? 0) >= row.chunks_total) await assemble(env, row.ep_id);
++}
++
+ export async function consume(batch: MessageBatch<ChunkJob>, env: Env): Promise<void> {
+   for (const msg of batch.messages) {
+     const { epId, idx } = msg.body;
+@@ -315,9 +344,17 @@ export async function consume(batch: MessageBatch<ChunkJob>, env: Env): Promise<
+     } catch (e) {
+       const message = e instanceof Error ? e.message : String(e);
+       const permanent = e instanceof HttpError && e.status === 422;
+-      if (permanent || msg.attempts > MAX_ATTEMPTS) {
++      if (permanent) {
+         await fail(env, epId, message);
+         msg.ack();
++      } else if (msg.attempts > MAX_ATTEMPTS) {
++        try {
++          const row = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
++          if (row && row.status !== "ready" && row.status !== "failed") await skipChunk(env, row, idx, message);
++        } catch {
++          await fail(env, epId, message);
++        }
++        msg.ack();
+       } else {
+         msg.retry({ delaySeconds: 10 * msg.attempts });
+       }
+diff --git a/backend/test/resilience.ts b/backend/test/resilience.ts
+new file mode 100644
+index 0000000..2de16c1
+--- /dev/null
++++ b/backend/test/resilience.ts
+@@ -0,0 +1,48 @@
++// A bad slice or an unfriendly host must not silently kill a whole episode, and errors must say what happened.
++import { call, files, finish, makeDb, makeEnv, ok, queued, setAi, worker } from "./harness";
++
++const { DB } = makeDb();
++const env = makeEnv(DB);
++const T = (await call(env, "POST", "/v1/users", "secret", { handle: "res", name: "R" })).j.token;
++const CH = 65_536;
++
++async function run(failIdx: number[], attemptsForFailing = 4) {
++  while (queued.length) {
++    const j = queued.shift();
++    const attempts = failIdx.includes(j.body.idx) ? attemptsForFailing : 1;
++    await worker.queue({ messages: [{ body: j.body, attempts, ack() {}, retry() {} }] } as any, env);
++  }
++}
++const mp3 = (n: number) => { const b = new Uint8Array(n).fill(7); b[0] = 0xff; b[1] = 0xfb; return b; };
++
++// one slice the model always rejects: the transcript still finishes, with a note
++files.set("one.mp3", { bytes: mp3(CH * 10), type: "audio/mpeg" });
++let n = 0;
++setAi(() => { n++; if (n === 3) throw new Error("AiError: bad audio"); return { segments: [{ start: 0, end: 2, text: " Hallo." }] }; });
++let r = await call(env, "POST", "/v1/transcripts", T, { epId: "one", audioUrl: "https://cdn.example.com/one.mp3", durationSec: 100 });
++ok("request accepted", r.s === 202);
++await run([2]);
++r = await call(env, "GET", "/v1/transcripts/one", T);
++ok("episode with one bad slice is still ready", r.j.status === "ready" && r.j.lines.length === 9, r.j);
++ok("it says a part is missing", /1 short part/.test(r.j.error ?? ""), r.j);
++
++// every slice rejected: failed, and the message names the real error
++files.set("bad.mp3", { bytes: mp3(CH * 8), type: "audio/mpeg" });
++setAi(() => { throw new Error("AiError: model overloaded"); });
++await call(env, "POST", "/v1/transcripts", T, { epId: "bad", audioUrl: "https://cdn.example.com/bad.mp3", durationSec: 80 });
++await run([0, 1, 2, 3, 4, 5, 6, 7]);
++r = await call(env, "GET", "/v1/transcripts/bad", T);
++ok("all slices failing fails the episode with the reason", r.j.status === "failed" && /model overloaded/.test(r.j.error), r.j);
++
++// retries below the limit do not skip anything
++files.set("retry.mp3", { bytes: mp3(CH * 2), type: "audio/mpeg" });
++setAi(() => ({ segments: [{ start: 0, end: 1, text: " Hi." }] }));
++await call(env, "POST", "/v1/transcripts", T, { epId: "retry", audioUrl: "https://cdn.example.com/retry.mp3", durationSec: 20 });
++await run([]);
++r = await call(env, "GET", "/v1/transcripts/retry", T);
++ok("normal episode unchanged", r.j.status === "ready" && !r.j.error, r.j);
++
++// host answers 403: a clear message that names the host
++r = await call(env, "POST", "/v1/transcripts", T, { epId: "gone", audioUrl: "https://cdn.example.com/missing.mp3", durationSec: 20 });
++ok("missing/blocked audio gives a readable error", r.s === 422 && /cdn\.example\.com/.test(JSON.stringify(r.j)) && /HTTP 404/.test(JSON.stringify(r.j)), r.j);
++finish();
+diff --git a/release/RELEASE-1.5.1.md b/release/RELEASE-1.5.1.md
+new file mode 100644
+index 0000000..3b14578
+--- /dev/null
++++ b/release/RELEASE-1.5.1.md
+@@ -0,0 +1,40 @@
++# Release 1.5.1: fewer failed transcripts, add any show by its feed
++
++**What changes for people**
++
++- **Transcripts that failed for one bad part now finish.** If the speech model rejects one slice of an episode (after 3 tries), that slice is skipped and the rest is transcribed, with a note "N short parts couldn't be transcribed". The episode only fails if more than a quarter of it can't be read, and then the message says why.
++- **Clear reasons when a podcast host blocks us.** The error now names the host and the HTTP status (for example "cdn.example.com refused the server's request for the audio (HTTP 403)" or "doesn't allow reading the audio in parts").
++- **Your own podcast:** Leestn searches Apple's podcast directory, and a Spotify link is also looked up there, so a show that isn't listed at Apple doesn't appear. You can now paste **any link**: the RSS feed, or a web page that advertises one (Leestn finds the feed on the page). "Nothing found" in Discover now offers "Add by RSS or link".
++
++| Question | Answer |
++| --- | --- |
++| Database migration needed? | **No.** No tables or columns change. Do not run any migration step. |
++| Worker deployment needed? | **Yes** (transcript code only). |
++| Android release needed? | **Yes** (add-by-link and the Discover hint). The transcript fixes work without it. |
++| New secrets, bindings, dependencies? | None. `wrangler.toml` untouched. |
++
++## Steps
++
++If you have **not yet applied** `leestn-v1.5.0.patch`, apply `leestn-v1.5.1-from-1.0.patch` instead (it contains everything). If you already applied 1.5.0, use `leestn-v1.5.1.patch`. Check first, then apply (edits files on your PC only):
++
++    git apply --check <patch name>
++    git apply <patch name>
++
++`git status` must not list `backend/wrangler.toml`. Then, as before:
++
++    powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
++
++(Step 3 of the script lists waiting migrations. If you did not deploy 1.5.0 before, it will show `0003_usage_meter.sql` and apply it after a backup and your `YES`; otherwise "No migrations to apply".) It backs up, asks `YES` before deploying, and checks `/health` shows `1.5.1`.
++
++App: `git add -A`, commit, push, then `git tag v1.5.1` and `git push origin v1.5.1`. The app on your phone will offer the update (Settings → About → Check for updates) once you have done the one-time signing setup from `RELEASE-1.5.0.md`.
++
++## Rollback
++
++Code only: `npx wrangler rollback` in `backend`. No data changes in this release.
++
++## Risks
++
++- **I could not reproduce your Easy German failure.** No tool in my workspace can download from podcast hosts or call Whisper. Its feed is served through a proxy host (`proxyfeed.svmaudio.com`) and tracking redirects, so my best guesses are a host that blocks automated downloads or ignores range requests. This release makes those cases, and single bad slices, either work or explain themselves. **After updating, try Easy German again and send me the exact message it shows.**
++- **Hosts that don't support range requests still can't be transcribed** (the server reads audio in parts). Supporting them needs temporary file storage (R2), a Cloudflare change I haven't made without your approval.
++- Feed discovery works on pages that declare their feed in the HTML. Castbox or Spotify pages may not; the RSS link is the reliable route.
++- The Android code has still not been compiled by me.
+diff --git a/release/release-backend.ps1 b/release/release-backend.ps1
+index c3b3193..a1748ec 100644
+--- a/release/release-backend.ps1
++++ b/release/release-backend.ps1
+@@ -157,4 +157,4 @@ try {
+ finally { Pop-Location }
+ 
+ Say 'Done'
+-Info 'If anything looks wrong, see release\RELEASE-1.5.0.md, section "If something goes wrong".'
++Info 'If anything looks wrong, see release\RELEASE-1.5.1.md, section "If something goes wrong".'

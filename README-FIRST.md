@@ -1,118 +1,40 @@
-# Release 1.5.0
+# Release 1.5.1: fewer failed transcripts, add any show by its feed
 
 **What changes for people**
 
-- A meter shows how much of today's free Whisper (speech to text) time is left, and Generate transcript warns, and the server refuses, when an episode would go over.
-- New Leestn logo in the app and as the Android app icon (including the themed icon on Android 13+).
-- In-app updates: Settings → About → Check for updates, and a banner on Home, from the releases of github.com/Hytyei/Leestn.
+- **Transcripts that failed for one bad part now finish.** If the speech model rejects one slice of an episode (after 3 tries), that slice is skipped and the rest is transcribed, with a note "N short parts couldn't be transcribed". The episode only fails if more than a quarter of it can't be read, and then the message says why.
+- **Clear reasons when a podcast host blocks us.** The error now names the host and the HTTP status (for example "cdn.example.com refused the server's request for the audio (HTTP 403)" or "doesn't allow reading the audio in parts").
+- **Your own podcast:** Leestn searches Apple's podcast directory, and a Spotify link is also looked up there, so a show that isn't listed at Apple doesn't appear. You can now paste **any link**: the RSS feed, or a web page that advertises one (Leestn finds the feed on the page). "Nothing found" in Discover now offers "Add by RSS or link".
 
 | Question | Answer |
 | --- | --- |
-| Database migration needed? | **Yes, one, additive:** `0003_usage_meter.sql` adds one column `audio_sec` (default 0) to `transcripts`. Nothing is removed, rewritten or reset. Old rows keep working. |
-| Worker deployment needed? | **Yes.** New route `GET /v1/usage` and the limit check. |
-| Android release needed? | **Yes.** Meter, logos, updater. Friends need the new APK once, by hand (see "First install"). |
-| New secrets, bindings, queues, dependencies? | None on Cloudflare. GitHub needs four signing secrets (below). `WHISPER_DAILY_MINUTES` is optional; the default is built in, so `wrangler.toml` doesn't change. |
-| Production resources used | Worker `leestn-api`, D1 `leestn` (`02f593c4-e232-466e-839e-c6277a592eb9`), queue `leestn-transcribe`. Nothing else. |
+| Database migration needed? | **No.** No tables or columns change. Do not run any migration step. |
+| Worker deployment needed? | **Yes** (transcript code only). |
+| Android release needed? | **Yes** (add-by-link and the Discover hint). The transcript fixes work without it. |
+| New secrets, bindings, dependencies? | None. `wrangler.toml` untouched. |
 
-Order matters: **backend first, then the app.** The new app copes with an old server (the meter simply stays hidden), but do the backend first anyway.
+## Steps
 
-## Part A: backend (Worker plus migration)
+If you have **not yet applied** `leestn-v1.5.0.patch`, apply `leestn-v1.5.1-from-1.0.patch` instead (it contains everything). If you already applied 1.5.0, use `leestn-v1.5.1.patch`. Check first, then apply (edits files on your PC only):
 
-Open PowerShell in your Leestn folder (`D:\RandD\Android Apps\Leestn App\Leestn`) and make sure you're logged in (`cd backend`, `npx wrangler whoami`, `cd ..`; use `npx wrangler login` if it says not logged in).
+    git apply --check <patch name>
+    git apply <patch name>
 
-**1. Put the new files in your project.** The update is a Git patch (a list of exact changes). This only *checks* that it fits and changes nothing:
-
-    git apply --check leestn-v1.5.0.patch
-
-Nothing printed = it fits. Then apply it (edits files on your PC only, nothing goes online):
-
-    git apply leestn-v1.5.0.patch
-
-If there's an error, don't force it: copy the folders from `files\` in the zip over your project (replace when asked). The zip has no `wrangler.toml` on purpose; yours holds your real database id. `git status` must **not** list `backend/wrangler.toml`.
-
-**2. Run the release script** (it's the same one as before; it stops at the first problem and waits for you to type `YES` at each gate):
+`git status` must not list `backend/wrangler.toml`. Then, as before:
 
     powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
 
-What it does, in order: checks `wrangler.toml` points at the real Worker, database and queue; runs the tests on your PC (nothing online); **lists waiting migrations (read-only), and this time it should show `0003_usage_meter.sql`**; GATE: saves a full backup of the live database to `backups\` (and notes the Time Travel restore point); GATE: applies `0003` to the existing `leestn` database; dry run of the Worker; GATE: deploys the existing `leestn-api`; checks `/health` says `1.5.0`.
+(Step 3 of the script lists waiting migrations. If you did not deploy 1.5.0 before, it will show `0003_usage_meter.sql` and apply it after a backup and your `YES`; otherwise "No migrations to apply".) It backs up, asks `YES` before deploying, and checks `/health` shows `1.5.1`.
 
-Add `-NoDeploy` to do only the checks and backup.
+App: `git add -A`, commit, push, then `git tag v1.5.1` and `git push origin v1.5.1`. The app on your phone will offer the update (Settings → About → Check for updates) once you have done the one-time signing setup from `RELEASE-1.5.0.md`.
 
-**3. Check (safe, creates nothing):** open `https://leestn-api.thehdv7.workers.dev/health` in a browser. It must say `"version":"1.5.0"`.
+## Rollback
 
-## Part B: signing key (one time, needed for updates)
+Code only: `npx wrangler rollback` in `backend`. No data changes in this release.
 
-Android only installs an update over an existing app if both are signed with **the same key**. So we make one key and use it forever. **If you lose it, nobody can update; keep a copy somewhere safe, and never commit it.**
+## Risks
 
-1. Create the key. This makes a file `leestn-release.jks` in the current folder (keytool comes with Android Studio; this path is the usual one, adjust if yours differs). It asks you for a password and some name fields; the name fields can be anything. Remember the password.
-
-       & "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -genkeypair -v -keystore leestn-release.jks -alias leestn -keyalg RSA -keysize 2048 -validity 10000
-
-   Move `leestn-release.jks` somewhere safe outside the project folder, and keep a backup copy.
-2. Turn it into text for GitHub (this copies it to the clipboard; nothing is uploaded):
-
-       [Convert]::ToBase64String([IO.File]::ReadAllBytes("leestn-release.jks")) | Set-Clipboard
-
-3. On GitHub: repository **Hytyei/Leestn** → Settings → Secrets and variables → Actions → New repository secret. Add four secrets:
-   - `LEESTN_KEYSTORE_BASE64`: paste from the clipboard
-   - `LEESTN_KEYSTORE_PASSWORD`: the password you chose
-   - `LEESTN_KEY_ALIAS`: `leestn`
-   - `LEESTN_KEY_PASSWORD`: the same password (keytool uses one password for both when you press Enter at that question)
-4. The repository must be **public** (Settings → General → bottom: Change visibility), otherwise your friends' apps can't read the releases. Don't put secrets in the code; the project's own secrets live only in Cloudflare and GitHub Secrets, so this is safe.
-
-If you also build in Android Studio and want those builds to update cleanly too, create a file `keystore.properties` in the project root (it's git-ignored) with:
-
-    storeFile=C:\\path\\to\\leestn-release.jks
-    storePassword=YOUR_PASSWORD
-    keyAlias=leestn
-    keyPassword=YOUR_PASSWORD
-
-## Part C: publish the app
-
-1. Save the change in Git:
-
-       git add -A
-       git status      # check: no .jks file, no backups\ folder, no keystore.properties, no wrangler.toml change
-       git commit -m "v1.5.0: Whisper meter, new logo, in-app updates"
-       git push
-
-2. Make the release. This starts a build on GitHub that makes the signed APK and publishes it as release `v1.5.0`:
-
-       git tag v1.5.0
-       git push origin v1.5.0
-
-   Watch it on GitHub → Actions → Release. If it fails with "Signing secrets are missing", redo Part B step 3.
-
-### First install (one time)
-
-Your phones currently have a build signed with a different key, and the old version has no updater. So **once**: uninstall Leestn, install `leestn-v1.5.0.apk` from the release page. (Uninstalling removes local data, but anything synced to your server comes back when you reconnect.) From then on, every new release arrives through Settings → About → Check for updates, and the Home banner.
-
-Future releases: bump `versionCode` and `versionName` in `app/build.gradle.kts`, commit, push a new tag such as `v1.5.1`. A tag with a dash (`v1.6.0-pre.1`) becomes a pre-release; the app offers the highest version either way.
-
-## If something goes wrong
-
-- **Migration applied, deploy failed:** safe. The old Worker ignores the new column. Run the script again; applied migrations never run twice.
-- **New Worker misbehaves:** in `backend`, `npx wrangler deployments list`, then `npx wrangler rollback` (code only; data and secrets untouched). The `audio_sec` column can stay; the old code doesn't mind it.
-- **Data damaged (very unlikely):** don't improvise. Keep `backups\leestn-*.sql` and the `.timetravel.txt` beside it and ask me. D1 Time Travel can restore to a point before the migration, but it also discards everything written after that point.
-- **App update says "signed with a different key":** that APK wasn't signed with your key. Install the release APK by hand once after uninstalling.
-- **Bad app release:** delete the release on GitHub (or publish a fixed higher version); the app offers the highest version.
-
-## Cost
-
-Nothing new. The meter reads a sum from your own database (a handful of D1 reads per check). Whisper stays about $0.0005 per audio minute, free up to about 200 minutes per day on Workers AI (10,000 free neurons a day, resetting 00:00 UTC). GitHub Actions and releases are free for public repositories.
-
-## Changed files
-
-- `backend/migrations/0003_usage_meter.sql` (new): the one additive column.
-- `backend/src/transcripts.ts`, `index.ts`, `types.ts`: `GET /v1/usage`, the free-time guard, version `1.5.0`. `backend/package.json`: version, test script. `backend/test/usage.ts` (new): tests including upgrade from the current schema.
-- App: `ui/UsageMeter.kt`, `ui/UpdateUi.kt`, `ui/Logo.kt`, `data/Updater.kt`, `data/Version.kt` (new); `AppViewModel`, `Server`, Settings, Episode, Home, Onboarding, `MainActivity`; manifest (install permission, FileProvider), `res/xml/file_paths.xml`; logos and launcher icons in `res/`; `build.gradle.kts` (version 1.5.0 / code 15, release signing).
-- `.github/workflows/release.yml` (signed build), `.gitignore`, `README.md`, `branding/`, `release/`.
-
-## Risks you should know about
-
-- **The Android app was not compiled or run here** (no Android SDK in my workspace). Expect a possible build error; paste it to me and I'll fix it.
-- The meter is an **estimate**: it counts audio sent through your server, and can't see other Workers AI use in the same Cloudflare account. The real limit is Cloudflare's; when an episode's length is unknown, the size at 128 kbps is used.
-- **Live Whisper with M4A is still untested** (from the previous release).
-- **The PowerShell script and the GitHub workflow have not been run** by me; the script stops safely at any problem.
-- The updater needs a **public** repo and Android shows its own "Install" confirmation; an app can't install silently.
-- The logo mapping is my reading of your two pictures: wide wordmark = in-app, square U-mark = app icon. Tell me if that is swapped.
+- **I could not reproduce your Easy German failure.** No tool in my workspace can download from podcast hosts or call Whisper. Its feed is served through a proxy host (`proxyfeed.svmaudio.com`) and tracking redirects, so my best guesses are a host that blocks automated downloads or ignores range requests. This release makes those cases, and single bad slices, either work or explain themselves. **After updating, try Easy German again and send me the exact message it shows.**
+- **Hosts that don't support range requests still can't be transcribed** (the server reads audio in parts). Supporting them needs temporary file storage (R2), a Cloudflare change I haven't made without your approval.
+- Feed discovery works on pages that declare their feed in the HTML. Castbox or Spotify pages may not; the RSS link is the reliable route.
+- The Android code has still not been compiled by me.
