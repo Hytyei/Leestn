@@ -1,103 +1,118 @@
-# Release 1.0.0-pre.2: transcripts for M4A episodes
+# Release 1.5.0
 
-**What changes for people:** pressing Generate transcript now also works for episodes that are M4A (AAC) files, not just MP3. Ogg/Opus, WAV, FLAC and video files are refused with a message that names the format.
+**What changes for people**
+
+- A meter shows how much of today's free Whisper (speech to text) time is left, and Generate transcript warns, and the server refuses, when an episode would go over.
+- New Leestn logo in the app and as the Android app icon (including the themed icon on Android 13+).
+- In-app updates: Settings → About → Check for updates, and a banner on Home, from the releases of github.com/Hytyei/Leestn.
 
 | Question | Answer |
 | --- | --- |
-| Database migration needed? | **No.** No tables or columns change. |
-| Worker deployment needed? | **Yes.** Backend code only. |
-| Android release needed? | **No.** The app already shows whatever message the server sends. Don't rebuild or reinstall it for this update. |
-| New secrets, bindings, queues, dependencies? | None. `wrangler.toml` and `package.json` dependencies are unchanged. |
-| Production resources used | Worker `leestn-api`, D1 database `leestn` (`02f593c4-e232-466e-839e-c6277a592eb9`), queue `leestn-transcribe`. Nothing else. |
+| Database migration needed? | **Yes, one, additive:** `0003_usage_meter.sql` adds one column `audio_sec` (default 0) to `transcripts`. Nothing is removed, rewritten or reset. Old rows keep working. |
+| Worker deployment needed? | **Yes.** New route `GET /v1/usage` and the limit check. |
+| Android release needed? | **Yes.** Meter, logos, updater. Friends need the new APK once, by hand (see "First install"). |
+| New secrets, bindings, queues, dependencies? | None on Cloudflare. GitHub needs four signing secrets (below). `WHISPER_DAILY_MINUTES` is optional; the default is built in, so `wrangler.toml` doesn't change. |
+| Production resources used | Worker `leestn-api`, D1 `leestn` (`02f593c4-e232-466e-839e-c6277a592eb9`), queue `leestn-transcribe`. Nothing else. |
 
-## Before you start (once)
+Order matters: **backend first, then the app.** The new app copes with an old server (the meter simply stays hidden), but do the backend first anyway.
 
-1. Open PowerShell in your Leestn folder (`D:\RandD\Android Apps\Leestn App\Leestn`): in File Explorer click the address bar, type `powershell`, press Enter.
-2. Make sure you are logged in to Cloudflare in Wrangler. This opens a browser and asks you to allow it (it stores a login on your PC, not in the project):
+## Part A: backend (Worker plus migration)
 
-       cd backend
-       npx wrangler login
-       cd ..
+Open PowerShell in your Leestn folder (`D:\RandD\Android Apps\Leestn App\Leestn`) and make sure you're logged in (`cd backend`, `npx wrangler whoami`, `cd ..`; use `npx wrangler login` if it says not logged in).
 
-   If you did this before, it's still fine. `npx wrangler whoami` shows who you are logged in as.
+**1. Put the new files in your project.** The update is a Git patch (a list of exact changes). This only *checks* that it fits and changes nothing:
 
-## Step 1: put the new files in your project
+    git apply --check leestn-v1.5.0.patch
 
-The update comes as a Git patch. A patch is a list of exact changes. This checks it fits your project **without changing anything**:
+Nothing printed = it fits. Then apply it (edits files on your PC only, nothing goes online):
 
-    git apply --check leestn-m4a-support.patch
+    git apply leestn-v1.5.0.patch
 
-- Nothing printed means it fits. Then apply it (this edits files on your PC only; nothing goes to Cloudflare or GitHub):
+If there's an error, don't force it: copy the folders from `files\` in the zip over your project (replace when asked). The zip has no `wrangler.toml` on purpose; yours holds your real database id. `git status` must **not** list `backend/wrangler.toml`.
 
-      git apply leestn-m4a-support.patch
-
-- If it prints an error, don't force it. Instead copy these from the `files\` folder in the zip into your project (same places, choose "replace"): `backend\src` (all files), `backend\test` (all files), the `release` folder, and `CLAUDE.md`. Then open `backend\package.json` and change two things: `"version"` to `"1.0.0-pre.2"`, and the `"test"` line under `"scripts"` to `"bun run test/e2e.ts && bun run test/m4a.ts"`. Don't copy `README.md` or `.gitignore` over yours; add the line `backups/` to your `.gitignore`. There is no `wrangler.toml` in the zip on purpose, because yours holds your real database id.
-
-Check the result: `git status` should list changes in `backend/src`, `backend/test`, `backend/package.json`, `README.md`, `.gitignore`, and new files `CLAUDE.md` and `release/`. It must **not** list `backend/wrangler.toml`.
-
-## Step 2: run the release script
+**2. Run the release script** (it's the same one as before; it stops at the first problem and waits for you to type `YES` at each gate):
 
     powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
 
-(`-ExecutionPolicy Bypass` lets this one script run even though Windows normally blocks scripts. It only applies to this one run.)
+What it does, in order: checks `wrangler.toml` points at the real Worker, database and queue; runs the tests on your PC (nothing online); **lists waiting migrations (read-only), and this time it should show `0003_usage_meter.sql`**; GATE: saves a full backup of the live database to `backups\` (and notes the Time Travel restore point); GATE: applies `0003` to the existing `leestn` database; dry run of the Worker; GATE: deploys the existing `leestn-api`; checks `/health` says `1.5.0`.
 
-The script goes through these steps and **stops at the first problem**. At each GATE it waits until you type `YES`:
+Add `-NoDeploy` to do only the checks and backup.
 
-1. **Checks it is the real Leestn.** Reads `backend/wrangler.toml` and stops if the Worker isn't `leestn-api`, the database isn't `leestn` with id `02f593c4-e232-466e-839e-c6277a592eb9`, or the queue isn't `leestn-transcribe`.
-2. **Runs the tests** on your PC (type check + automated tests with a fake database and fake Whisper). Nothing touches Cloudflare. The automated tests need [Bun](https://bun.sh); without it the script tells you and asks if you want to continue.
-3. **Lists waiting migrations** (read-only). For this release it should say "No migrations to apply". If it ever lists something, stop and tell me.
-4. **GATE: backup.** Saves a full copy of the live database to `backups\leestn-<date>.sql` on your PC, and writes down D1's current "Time Travel" restore point next to it. Reading data doesn't change it. Keep the `backups` folder private; it is excluded from Git.
-5. **Migrations:** skipped, because none are needed.
-6. **Dry run, then GATE: deploy.** A dry run builds the code and lists what it would connect to, without deploying. After you type `YES`, it deploys the code to the existing `leestn-api` Worker. Your data, queue and secrets (`INVITE_KEY`) are not touched.
-7. **Health check.** Opens `https://leestn-api.thehdv7.workers.dev/health` (read-only, creates nothing) and shows the version. It should say `1.0.0-pre.2`.
+**3. Check (safe, creates nothing):** open `https://leestn-api.thehdv7.workers.dev/health` in a browser. It must say `"version":"1.5.0"`.
 
-To only do the checks and backup, with nothing deployed, add `-NoDeploy` to the command.
+## Part B: signing key (one time, needed for updates)
 
-## Step 3: save the change in Git (optional but recommended)
+Android only installs an update over an existing app if both are signed with **the same key**. So we make one key and use it forever. **If you lose it, nobody can update; keep a copy somewhere safe, and never commit it.**
 
-    git add -A
-    git commit -m "Transcripts for M4A/AAC episodes (backend 1.0.0-pre.2)"
-    git push
+1. Create the key. This makes a file `leestn-release.jks` in the current folder (keytool comes with Android Studio; this path is the usual one, adjust if yours differs). It asks you for a password and some name fields; the name fields can be anything. Remember the password.
 
-`git add -A` won't include `backups\` (it's ignored). Check with `git status` before committing that no `.dev.vars` or `.sql` backup is listed.
+       & "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -genkeypair -v -keystore leestn-release.jks -alias leestn -keyalg RSA -keysize 2048 -validity 10000
 
-## After deploying: what to check
+   Move `leestn-release.jks` somewhere safe outside the project folder, and keep a backup copy.
+2. Turn it into text for GitHub (this copies it to the clipboard; nothing is uploaded):
 
-- Safe, free checks: open `https://leestn-api.thehdv7.workers.dev/health` in a browser and see `"version":"1.0.0-pre.2"`. In the app, open an MP3 episode you've already transcribed and see its transcript still loads.
-- **Real M4A test (optional, uses a little of your Whisper quota):** I couldn't test the live Whisper with M4A audio. In the app pick a **short** M4A episode (under 10 minutes; costs about half a cent and uses about 470 of the 10,000 free daily "neurons") and press Generate transcript. Either it finishes, or the app shows the reason. Tell me what you see.
+       [Convert]::ToBase64String([IO.File]::ReadAllBytes("leestn-release.jks")) | Set-Clipboard
+
+3. On GitHub: repository **Hytyei/Leestn** → Settings → Secrets and variables → Actions → New repository secret. Add four secrets:
+   - `LEESTN_KEYSTORE_BASE64`: paste from the clipboard
+   - `LEESTN_KEYSTORE_PASSWORD`: the password you chose
+   - `LEESTN_KEY_ALIAS`: `leestn`
+   - `LEESTN_KEY_PASSWORD`: the same password (keytool uses one password for both when you press Enter at that question)
+4. The repository must be **public** (Settings → General → bottom: Change visibility), otherwise your friends' apps can't read the releases. Don't put secrets in the code; the project's own secrets live only in Cloudflare and GitHub Secrets, so this is safe.
+
+If you also build in Android Studio and want those builds to update cleanly too, create a file `keystore.properties` in the project root (it's git-ignored) with:
+
+    storeFile=C:\\path\\to\\leestn-release.jks
+    storePassword=YOUR_PASSWORD
+    keyAlias=leestn
+    keyPassword=YOUR_PASSWORD
+
+## Part C: publish the app
+
+1. Save the change in Git:
+
+       git add -A
+       git status      # check: no .jks file, no backups\ folder, no keystore.properties, no wrangler.toml change
+       git commit -m "v1.5.0: Whisper meter, new logo, in-app updates"
+       git push
+
+2. Make the release. This starts a build on GitHub that makes the signed APK and publishes it as release `v1.5.0`:
+
+       git tag v1.5.0
+       git push origin v1.5.0
+
+   Watch it on GitHub → Actions → Release. If it fails with "Signing secrets are missing", redo Part B step 3.
+
+### First install (one time)
+
+Your phones currently have a build signed with a different key, and the old version has no updater. So **once**: uninstall Leestn, install `leestn-v1.5.0.apk` from the release page. (Uninstalling removes local data, but anything synced to your server comes back when you reconnect.) From then on, every new release arrives through Settings → About → Check for updates, and the Home banner.
+
+Future releases: bump `versionCode` and `versionName` in `app/build.gradle.kts`, commit, push a new tag such as `v1.5.1`. A tag with a dash (`v1.6.0-pre.1`) becomes a pre-release; the app offers the highest version either way.
 
 ## If something goes wrong
 
-Nothing here changes the database, so the data can't be damaged by this release. Problems can only be in the Worker code.
-
-- **The new Worker misbehaves (errors on MP3, health check fails):** go back to the previous code. In `backend`:
-
-      npx wrangler deployments list     # shows the versions, newest first
-      npx wrangler rollback             # returns to the previous version; it asks you to confirm
-
-  This switches only the code of the existing Worker. Data and secrets are untouched. MP3 transcripts keep working because old-format queue messages are understood by the new code (this is tested). One caveat: if you roll back while an M4A transcript is still being generated, that one transcript will fail. Just press Generate again afterwards.
-- **Deploy failed halfway:** the old version keeps running. Run the script again.
-- **A migration was applied but deploy failed (not applicable now; for future releases):** the old Worker code keeps working with the new, additive columns. Fix and run the script again; migrations never run twice.
-- **Data damaged (very unlikely; only after a migration):** don't improvise. Keep the backup file and the `.timetravel.txt` next to it, and ask me. D1 can restore itself to an earlier point in time (`wrangler d1 time-travel restore`), which keeps the same database id, but it also discards everything written after that point, so decide together.
+- **Migration applied, deploy failed:** safe. The old Worker ignores the new column. Run the script again; applied migrations never run twice.
+- **New Worker misbehaves:** in `backend`, `npx wrangler deployments list`, then `npx wrangler rollback` (code only; data and secrets untouched). The `audio_sec` column can stay; the old code doesn't mind it.
+- **Data damaged (very unlikely):** don't improvise. Keep `backups\leestn-*.sql` and the `.timetravel.txt` beside it and ask me. D1 Time Travel can restore to a point before the migration, but it also discards everything written after that point.
+- **App update says "signed with a different key":** that APK wasn't signed with your key. Install the release APK by hand once after uninstalling.
+- **Bad app release:** delete the release on GitHub (or publish a fixed higher version); the app offers the highest version.
 
 ## Cost
 
-No new services. M4A transcription costs the same as MP3: about $0.0005 per audio minute on Workers AI, within the same daily limits (`MAX_TRANSCRIPTS_PER_DAY`, `MAX_PER_USER_PER_DAY`). The Worker does a little more work to plan an M4A (about 5 requests to the podcast host, a few milliseconds of computing).
+Nothing new. The meter reads a sum from your own database (a handful of D1 reads per check). Whisper stays about $0.0005 per audio minute, free up to about 200 minutes per day on Workers AI (10,000 free neurons a day, resetting 00:00 UTC). GitHub Actions and releases are free for public repositories.
 
 ## Changed files
 
-- `backend/src/mp4.ts` (new): reads the M4A index and cuts audio between frames.
-- `backend/src/transcripts.ts`: detects the real format from the first bytes, plans M4A pieces, and builds them for Whisper. MP3 path unchanged in behaviour.
-- `backend/src/types.ts`: queue message type gets two optional fields (old messages stay valid).
-- `backend/src/index.ts`, `backend/package.json`: version `1.0.0-pre.2`, test script.
-- `backend/test/harness.ts`, `e2e.ts`, `m4a.ts`: tests (37 new checks for M4A, MP3 flow unchanged).
-- `release/release-backend.ps1`, `release/README-FIRST.md` (new): this procedure.
-- `CLAUDE.md` (new): your standing rules, so they apply to every future update.
-- `README.md`, `.gitignore` (`backups/`).
+- `backend/migrations/0003_usage_meter.sql` (new): the one additive column.
+- `backend/src/transcripts.ts`, `index.ts`, `types.ts`: `GET /v1/usage`, the free-time guard, version `1.5.0`. `backend/package.json`: version, test script. `backend/test/usage.ts` (new): tests including upgrade from the current schema.
+- App: `ui/UsageMeter.kt`, `ui/UpdateUi.kt`, `ui/Logo.kt`, `data/Updater.kt`, `data/Version.kt` (new); `AppViewModel`, `Server`, Settings, Episode, Home, Onboarding, `MainActivity`; manifest (install permission, FileProvider), `res/xml/file_paths.xml`; logos and launcher icons in `res/`; `build.gradle.kts` (version 1.5.0 / code 15, release signing).
+- `.github/workflows/release.yml` (signed build), `.gitignore`, `README.md`, `branding/`, `release/`.
 
-## Compatibility and risks
+## Risks you should know about
 
-- **App ↔ Worker:** the API is identical (same routes, same responses). The only difference is that some M4A requests that used to be refused now succeed, and refusals for other formats name the format.
-- **Queue messages already waiting** (old format) are still processed correctly by the new code (tested).
-- **Live Whisper with ADTS audio is untested.** The M4A pieces are standard AAC streams, which Whisper tooling normally decodes, but I could not confirm it against Workers AI. If it refuses them, the transcript ends as "failed" with a message after three tries; nothing else is affected.
-- **HE-AAC** (low-bitrate podcasts) is best effort. **Video podcasts** and non-AAC audio are refused.
+- **The Android app was not compiled or run here** (no Android SDK in my workspace). Expect a possible build error; paste it to me and I'll fix it.
+- The meter is an **estimate**: it counts audio sent through your server, and can't see other Workers AI use in the same Cloudflare account. The real limit is Cloudflare's; when an episode's length is unknown, the size at 128 kbps is used.
+- **Live Whisper with M4A is still untested** (from the previous release).
+- **The PowerShell script and the GitHub workflow have not been run** by me; the script stops safely at any problem.
+- The updater needs a **public** repo and Android shows its own "Install" confirmation; an app can't install silently.
+- The logo mapping is my reading of your two pictures: wide wordmark = in-app, square U-mark = app icon. Tell me if that is swapped.

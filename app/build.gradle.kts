@@ -1,8 +1,19 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Release signing. Updates only install over the old app when every release is signed with the SAME key.
+// The key comes from keystore.properties (never committed) or from environment variables (GitHub Actions).
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun signing(prop: String, env: String): String? = System.getenv(env)?.takeIf { it.isNotBlank() } ?: keystoreProps.getProperty(prop)
+val releaseStore = signing("storeFile", "LEESTN_KEYSTORE_FILE")
 
 android {
     namespace = "app.leestn"
@@ -12,12 +23,25 @@ android {
         applicationId = "app.leestn"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.0.0-pre.1"
+        versionCode = 15
+        versionName = "1.5.0"
+    }
+
+    signingConfigs {
+        if (releaseStore != null) {
+            create("release") {
+                storeFile = file(releaseStore)
+                storePassword = signing("storePassword", "LEESTN_KEYSTORE_PASSWORD")
+                keyAlias = signing("keyAlias", "LEESTN_KEY_ALIAS")
+                keyPassword = signing("keyPassword", "LEESTN_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // Without a key (a casual local build) fall back to the debug key so the build still works.
+            signingConfig = if (releaseStore != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

@@ -2,7 +2,7 @@
 
 A podcast tracker and player. Trakt-style dark UI, real podcasts, offline listening, on-demand transcripts, ratings in the style of Series Graph, friends, badges, widgets.
 
-**Version 1.0.0-pre.1, a pre-release for testing the app and the backend.**
+**Version 1.5.0.**
 
     app/       Android app (Kotlin, Jetpack Compose, Media3)
     backend/   Cloudflare Worker (D1 database, Queues, Workers AI Whisper)
@@ -99,9 +99,13 @@ Local development: `cp .dev.vars.example .dev.vars`, `npm run db:migrate:local`,
 
 - `android.yml` builds a debug APK on every push and pull request.
 - `backend.yml` typechecks and tests the Worker. To also deploy on every push to `main`: add the repository secrets `CLOUDFLARE_API_TOKEN` (template "Edit Cloudflare Workers", plus D1 edit) and `CLOUDFLARE_ACCOUNT_ID`, do the one-time setup above by hand, then set the repository variable `DEPLOY_BACKEND` to `true`.
-- `release.yml`: push a tag such as `v1.0.0-pre.1` and it publishes a GitHub pre-release with the APK attached.
+- `release.yml`: push a tag such as `v1.5.0` and it builds a **signed** APK and publishes a GitHub release with it attached. The app's Settings → About → "Check for updates" (and a banner on Home) reads these releases and always offers the highest version, pre-releases included. Needs the signing secrets from `release/RELEASE-1.5.0.md`, and the repository must be public.
 
-      git tag v1.0.0-pre.1 && git push origin v1.0.0-pre.1
+      git tag v1.5.0 && git push origin v1.5.0
+
+## Free Whisper allowance meter
+
+The server counts the audio it was asked to transcribe each day (UTC) and compares it with `WHISPER_DAILY_MINUTES` (default 200, about the free 10,000 neurons a day). `GET /v1/usage` returns used and remaining minutes. The app shows the meter in Settings and on an episode, and a request that doesn't fit is refused with a clear message (HTTP 429). It is an estimate and can't see other Workers AI use in your Cloudflare account. To change the limit (for example on a paid plan) add `WHISPER_DAILY_MINUTES = "600"` under `[vars]` in `wrangler.toml`.
 
 ## Status of this pre-release
 

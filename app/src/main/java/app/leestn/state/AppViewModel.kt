@@ -32,6 +32,11 @@ import app.leestn.data.RPerson
 import app.leestn.data.RProfile
 import app.leestn.data.ShareCode
 import app.leestn.data.Server
+import app.leestn.data.Usage
+import app.leestn.data.Updater
+import app.leestn.data.Version
+import app.leestn.data.AppRelease
+import app.leestn.data.UpdateState
 import app.leestn.data.BadgeProgress
 import app.leestn.data.Badges
 import app.leestn.data.Catalog
@@ -123,6 +128,79 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         private set
     var serverBusy by mutableStateOf<Load>(Load.Idle)
         private set
+
+    // ---- app updates from GitHub releases ----
+    var update by mutableStateOf<UpdateState>(UpdateState.Idle)
+        private set
+    var dismissedUpdate by mutableStateOf(prefs.getString("dismissedUpdate", "") ?: "")
+        private set
+
+    /** Looks for a newer release. Quiet unless [manual]. The automatic check runs at most every 6 hours. */
+    fun checkUpdate(manual: Boolean) {
+        val st = update
+        if (st is UpdateState.Checking || st is UpdateState.Downloading || st is UpdateState.Ready) return
+        val now = System.currentTimeMillis()
+        if (!manual && now - prefs.getLong("lastUpdateCheck", 0L) < 6 * 3600_000L) return
+        update = UpdateState.Checking
+        viewModelScope.launch {
+            try {
+                val rel = withContext(Dispatchers.IO) { Updater.latest() }
+                prefs.edit().putLong("lastUpdateCheck", now).apply()
+                val mine = Updater.installedVersion(app)
+                update = if (rel != null && Version.isNewer(rel.version, mine)) UpdateState.Available(rel) else UpdateState.UpToDate
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                update = if (manual) UpdateState.Failed(e.message ?: "Couldn't check for updates") else UpdateState.Idle
+            }
+        }
+    }
+
+    fun dismissUpdate(version: String) {
+        dismissedUpdate = version
+        prefs.edit().putString("dismissedUpdate", version).apply()
+    }
+
+    /** Download the new APK, check it, then open Android's installer. */
+    fun downloadUpdate(rel: AppRelease) {
+        if (update is UpdateState.Downloading) return
+        update = UpdateState.Downloading(rel, 0f)
+        viewModelScope.launch {
+            try {
+                val f = withContext(Dispatchers.IO) { Updater.download(app, rel) { p -> update = UpdateState.Downloading(rel, p) } }
+                val bad = Updater.problem(app, f)
+                if (bad != null) { f.delete(); update = UpdateState.Failed(bad); return@launch }
+                update = UpdateState.Ready(rel, f)
+                installUpdate()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                update = UpdateState.Failed(e.message ?: "The download failed")
+            }
+        }
+    }
+
+    /** Opens the installer for a downloaded update, asking for Android's permission first if needed. */
+    fun installUpdate() {
+        val st = update as? UpdateState.Ready ?: return
+        if (!Updater.canInstall(app)) { Updater.openInstallPermission(app); return }
+        Updater.install(app, st.file)
+    }
+
+    var usage by mutableStateOf<Usage?>(null)
+        private set
+
+    /** Refresh the free-Whisper meter. Never creates jobs or uses AI. */
+    fun loadUsage() {
+        if (!connected) { usage = null; return }
+        val base = serverUrl
+        val tok = serverToken
+        viewModelScope.launch {
+            try { usage = withContext(Dispatchers.IO) { Server.usage(base, tok) } }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Throwable) { /* keep the last value; the meter is optional */ }
+        }
+    }
 
     val connected: Boolean get() = serverUrl.startsWith("https://") && serverToken.isNotBlank()
 
@@ -725,10 +803,12 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             try {
                 val st = withContext(Dispatchers.IO) { Backend.requestTranscript(serverUrl, serverToken, ep.id, ep.audioUrl, ep.durationSec) }
                 applyServerTx(ep, st)
+                loadUsage()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 transcripts[epId] = TxState.Failed(e.message ?: "Couldn't start transcription")
+                loadUsage()
             }
         }
     }

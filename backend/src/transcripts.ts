@@ -118,6 +118,27 @@ export async function getTranscript(env: Env, req: Request, epId: string): Promi
   return json(env, view(row));
 }
 
+export async function usageNow(env: Env) {
+  const dayStart = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+  const limitSec = int(env.WHISPER_DAILY_MINUTES, 200, 0, 100_000) * 60;
+  const r = await env.DB.prepare("SELECT COALESCE(SUM(audio_sec),0) AS s, COUNT(*) AS n FROM transcripts WHERE created_at >= ?").bind(dayStart).first<{ s: number; n: number }>();
+  return { dayStart, limitSec, usedSec: r?.s ?? 0, jobs: r?.n ?? 0 };
+}
+
+/** GET /v1/usage: how much of today's free Whisper time is used. Read-only, uses no AI. */
+export async function getUsage(env: Env, req: Request): Promise<Response> {
+  await member(env, req);
+  const u = await usageNow(env);
+  return json(env, {
+    limitMin: Math.round(u.limitSec / 60),
+    usedMin: Math.round((u.usedSec / 60) * 10) / 10,
+    remainingMin: Math.max(0, Math.round(((u.limitSec - u.usedSec) / 60) * 10) / 10),
+    jobs: u.jobs,
+    resetsAt: u.dayStart + 86_400_000,
+    estimate: true,
+  });
+}
+
 export async function requestTranscript(env: Env, req: Request): Promise<Response> {
   const { user } = await member(env, req);
   const requester = user?.id ?? "key";
@@ -148,6 +169,14 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
     throw new HttpError(422, `This episode is ${found.why}, which can't be transcribed yet. MP3 and M4A (AAC) work.`);
   }
 
+  // Free-allowance guard: Workers AI Whisper is free up to a daily amount of audio.
+  const estSec = durationSec > 0 ? durationSec : Math.round((size * 8) / 128_000);
+  const u = await usageNow(env);
+  if (u.usedSec + estSec > u.limitSec) {
+    const left = Math.max(0, Math.floor((u.limitSec - u.usedSec) / 60));
+    throw new HttpError(429, `Not enough free Whisper time left today (${left} min left, this episode needs about ${Math.ceil(estSec / 60)} min). The allowance resets at 00:00 UTC.`);
+  }
+
   const chunkBytes = int(env.CHUNK_BYTES, 1_048_576, 65_536, 4 * 1024 * 1024);
   let messages: ChunkJob[];
   if (found.kind === "mp4") {
@@ -169,12 +198,12 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
   await env.DB.batch([
     env.DB.prepare("DELETE FROM transcript_chunks WHERE ep_id = ?").bind(epId),
     env.DB.prepare(
-      `INSERT INTO transcripts (ep_id, status, progress, error, chunks_total, audio_url, duration_sec, lines, requested_by, created_at, updated_at)
-       VALUES (?, 'queued', 0, NULL, ?, ?, ?, NULL, ?, ?, ?)
+      `INSERT INTO transcripts (ep_id, status, progress, error, chunks_total, audio_url, duration_sec, lines, requested_by, created_at, updated_at, audio_sec)
+       VALUES (?, 'queued', 0, NULL, ?, ?, ?, NULL, ?, ?, ?, ?)
        ON CONFLICT(ep_id) DO UPDATE SET status='queued', progress=0, error=NULL, chunks_total=excluded.chunks_total,
          audio_url=excluded.audio_url, duration_sec=excluded.duration_sec, lines=NULL, requested_by=excluded.requested_by,
-         created_at=excluded.created_at, updated_at=excluded.updated_at`,
-    ).bind(epId, total, audioUrl, durationSec, requester, now, now),
+         created_at=excluded.created_at, updated_at=excluded.updated_at, audio_sec=excluded.audio_sec`,
+    ).bind(epId, total, audioUrl, durationSec, requester, now, now, estSec),
   ]);
 
   // Queue limits: 100 messages and 256 KB per batch. M4A messages carry frame sizes, so batch by size too.

@@ -281,6 +281,7 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
                         vm, openShow = ::openShow, openEp = ::openEp,
                         openItem = { openRemote(it.epId, it.showId, it.showName, it.showArt, it.feedUrl) }, openPerson = { push("person:$it") },
                         goFriends = { goTab("friends") }, goDiscover = { goTab("discover") },
+                        openSettings = { push("settings") },
                     )
                     r == "discover" -> DiscoverScreen(vm) { openShow(it) }
                     r == "lists" -> ListsScreen(vm, openList = { push("list:$it") }, openDownloads = { push("downloads") })

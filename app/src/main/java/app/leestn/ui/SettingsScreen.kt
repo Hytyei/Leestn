@@ -131,7 +131,8 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, openDownloads: () -> Un
                 val ctx = androidx.compose.ui.platform.LocalContext.current
                 val ver = remember { try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" } }
                 Text("Leestn $ver", style = MaterialTheme.typography.titleSmall)
-                Text("Pre-release for testing. Things will break. Tell the person who gave you this build what you ran into.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
+                Text("Updates come from github.com/Hytyei/Leestn. Leestn checks for a newer version when you open it.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
+                UpdateControls(vm)
             }
         }
         item {
@@ -222,6 +223,7 @@ private fun ServerSection(vm: AppViewModel) {
                 vm.serverUrl.removePrefix("https://") + "\nYour server syncs your log and ratings, runs the friends feed, and generates transcripts when you press Generate on an episode. Transcripts are shared, so each episode is only processed once for everyone on the server.",
                 style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
             )
+            UsageMeter(vm)
             InviteCard(vm)
             if (busy is Load.Failed) Text(busy.message, color = LColors.Red, style = MaterialTheme.typography.bodySmall)
             if (busy is Load.Busy) Spinner(Modifier.fillMaxWidth())

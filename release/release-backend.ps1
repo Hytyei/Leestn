@@ -1,4 +1,4 @@
-﻿<#
+<#
 Leestn backend release script.
 
 What it does, in order. It stops at the first error, and at every "GATE" it waits for you to type YES.
@@ -157,4 +157,4 @@ try {
 finally { Pop-Location }
 
 Say 'Done'
-Info 'If anything looks wrong, see release\RELEASE-1.0.0-pre.2.md, section "If something goes wrong".'
+Info 'If anything looks wrong, see release\RELEASE-1.5.0.md, section "If something goes wrong".'

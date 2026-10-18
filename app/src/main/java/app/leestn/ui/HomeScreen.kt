@@ -104,6 +104,7 @@ fun HomeScreen(
     openPerson: (String) -> Unit,
     goFriends: () -> Unit,
     goDiscover: () -> Unit,
+    openSettings: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) { vm.loadTrending(); vm.loadForYou() }
     LaunchedEffect(vm.connected) { if (vm.connected) vm.loadFeed() }
@@ -130,10 +131,10 @@ fun HomeScreen(
     LazyColumn(contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
         item(key = "title") {
             Row(Modifier.padding(horizontal = 16.dp).appear(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("leestn", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Box(Modifier.size(8.dp).clip(RoundedCornerShape(99.dp)).background(LColors.Red))
+                LeestnLogo()
             }
         }
+        item(key = "update") { UpdateBanner(vm, openSettings = openSettings) }
         if (nothing) {
             item(key = "welcome") {
                 Column(

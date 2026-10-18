@@ -310,7 +310,11 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                             tx.note ?: "No transcript from the publisher. Leestn can generate one for everyone with speech recognition. It takes a few minutes and keeps going if you leave this page.",
                             style = MaterialTheme.typography.bodyMedium, color = LColors.Text3,
                         )
-                        ActionPill("Generate transcript", Icons.Rounded.Subtitles, primary = true) { vm.generateTranscript(epId) }
+                        val needMin = (ep.durationSec) / 60.0
+                        UsageMeter(vm, needMin = needMin.takeIf { it > 0 })
+                        val left = vm.usage?.remainingMin
+                        val fits = left == null || needMin <= left
+                        if (fits) ActionPill("Generate transcript", Icons.Rounded.Subtitles, primary = true) { vm.generateTranscript(epId) }
                     }
                     is TxState.Generating -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         ThinBar(tx.progress)

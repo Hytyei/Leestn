@@ -53,8 +53,7 @@ fun OnboardingScreen(vm: AppViewModel) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(Modifier.appear(0), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("leestn", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Box(Modifier.size(8.dp).clip(RoundedCornerShape(99.dp)).background(LColors.Red))
+                LeestnLogo()
             }
             Text("What do you listen to?", style = MaterialTheme.typography.displaySmall, modifier = Modifier.appear(1))
             Text(

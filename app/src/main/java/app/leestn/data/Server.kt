@@ -11,6 +11,7 @@ import java.io.IOException
 import java.net.URLEncoder
 
 /** One person on a Leestn server. */
+data class Usage(val limitMin: Int, val usedMin: Double, val remainingMin: Double, val resetsAt: Long)
 data class RPerson(val handle: String, val name: String, val bio: String, val avatarV: Long, val following: Boolean)
 
 /** One thing a followed person listened to. */
@@ -116,6 +117,12 @@ object Server {
     fun me(base: String, token: String): RPerson {
         val j = call("GET", base, token, "/v1/me")
         return RPerson(j.getString("handle"), j.optString("name"), j.optString("bio"), j.optLong("avatarV"), false)
+    }
+
+    /** Today's free Whisper allowance on the server. Read-only. */
+    fun usage(base: String, token: String): Usage {
+        val j = call("GET", base, token, "/v1/usage")
+        return Usage(j.optInt("limitMin"), j.optDouble("usedMin"), j.optDouble("remainingMin"), j.optLong("resetsAt"))
     }
 
     fun push(base: String, token: String, log: List<JSONObject>, showRatings: List<JSONObject>, badges: JSONArray?) {

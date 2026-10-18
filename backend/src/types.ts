@@ -7,6 +7,7 @@ export interface Env {
   MAX_TRANSCRIPTS_PER_DAY: string;
   MAX_PER_USER_PER_DAY: string;
   CHUNK_BYTES: string;
+  WHISPER_DAILY_MINUTES?: string;
   MAX_AUDIO_MB: string;
   ALLOW_ORIGIN: string;
 }
