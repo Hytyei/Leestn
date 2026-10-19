@@ -87,7 +87,7 @@ sealed class Load {
 sealed class TxState {
     object Loading : TxState()
     object None : TxState()
-    class Failed(val message: String) : TxState()
+    class Failed(val message: String, val fromServer: Boolean = false) : TxState()
     class Ready(val lines: List<TxLine>, val synced: Boolean, val generated: Boolean = false) : TxState()
     /** No transcript from the publisher, but you are connected to a server that can generate one on request. */
     class Offer(val note: String? = null) : TxState()
