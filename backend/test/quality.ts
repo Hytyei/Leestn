@@ -3,6 +3,9 @@ import { aiInputs, call, drain, files, finish, makeDb, makeEnv, ok, aiCalls, set
 
 const { DB } = makeDb();
 const env = makeEnv(DB);
+env.MAX_PER_USER_PER_DAY = "100";
+env.MAX_TRANSCRIPTS_PER_DAY = "100";
+env.WHISPER_DAILY_MINUTES = "100000";
 const T = (await call(env, "POST", "/v1/users", "secret", { handle: "qual", name: "Q" })).j.token;
 const CH = 65_536;
 
@@ -90,6 +93,34 @@ ok("asking again after a failure is accepted", r.s === 202, r);
 await drain(env);
 r = await call(env, "GET", "/v1/transcripts/rf", T);
 ok("and now it works", r.j.status === "ready" && r.j.lines.length > 0, r.j);
+// --- timing comes from the file itself, not from the feed's (often wrong) duration ---
+function withXing(frames: number, kind = "Xing") {
+  const f = mp3(frames + 1);
+  const at = 4 + 32;
+  f.fill(0, 4, 417);
+  f.set([...kind].map((c) => c.charCodeAt(0)), at);
+  f[at + 7] = 7; // frames, bytes, toc
+  f.set([(frames >>> 24) & 255, (frames >>> 16) & 255, (frames >>> 8) & 255, frames & 255], at + 8);
+  for (let k = 0; k < 100; k++) f[at + 16 + k] = Math.floor((k * 256) / 100);
+  return f;
+}
+async function lastStart(name: string, bytes: Uint8Array, clientSec: number) {
+  files.set(name, { bytes, type: "audio/mpeg" });
+  setAi(() => ({ segments: [{ start: 0, end: 1, text: " Wort." }] }));
+  await call(env, "POST", "/v1/transcripts", T, { epId: name, audioUrl: "https://cdn.example.com/" + name, durationSec: clientSec });
+  await drain(env);
+  const out = await call(env, "GET", "/v1/transcripts/" + name, T);
+  return (out.j.lines as { t: number }[]).map((l) => l.t);
+}
+let t1 = await lastStart("xing.mp3", withXing(1000), 5000); // real length 26.1 s
+ok("Xing frame count beats a wrong feed duration", Math.max(...t1) <= 27 && Math.max(...t1) >= 20, t1);
+let t2 = await lastStart("cbr.mp3", mp3(1000), 5000); // 128 kbps constant: 26 s
+ok("constant bitrate beats a wrong feed duration", Math.max(...t2) <= 27 && Math.max(...t2) >= 20, t2);
+let t3 = await lastStart("nofeed.mp3", mp3(1000), 0);
+ok("works with no feed duration at all", Math.max(...t3) <= 27 && Math.max(...t3) >= 20, t3);
+let t4 = await lastStart("info.mp3", withXing(1000, "Info"), 5000);
+ok("Info (constant bitrate) header works", Math.max(...t4) <= 27 && Math.max(...t4) >= 20, t4);
+
 // --- redo a finished transcript on request only ---
 reset();
 setAi(() => ({ segments: [{ start: 0, end: 1, text: " Zweite Fassung." }] }));

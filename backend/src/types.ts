@@ -30,6 +30,9 @@ export interface ChunkJob {
   /** MP3: size of the ID3 tag at the start of the file (cover art can be large) and the total file size. */
   id3?: number;
   sz?: number;
+  /** MP3: real length in seconds from the file's own header (more reliable than the feed), and the VBR seek table if it has one. */
+  dur?: number;
+  toc?: number[];
 }
 
 export interface Segment {

@@ -33,6 +33,9 @@ import app.leestn.data.RProfile
 import app.leestn.data.ShareCode
 import app.leestn.data.Server
 import app.leestn.data.Usage
+import app.leestn.data.TxEdit
+import app.leestn.data.TxEditing
+import app.leestn.data.TxLocal
 import app.leestn.data.Updater
 import app.leestn.data.Version
 import app.leestn.data.AppRelease
@@ -128,6 +131,61 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         private set
     var serverBusy by mutableStateOf<Load>(Load.Idle)
         private set
+
+    // ---- the person's own transcript changes: pasted text, timing fixes, display choices ----
+    private val txLocal = TxLocal(app)
+    var showTimings by mutableStateOf(txLocal.timings)
+        private set
+    /** Pasted transcript text per episode. */
+    val pasted = mutableStateMapOf<String, String>()
+    /** Timing fixes, keyed "episode|orig" or "episode|paste". */
+    val txEdits = mutableStateMapOf<String, TxEdit>()
+    /** "paste" or "orig": which transcript to show when an episode has both. */
+    val txSource = mutableStateMapOf<String, String>()
+
+    fun changeShowTimings(on: Boolean) { showTimings = on; txLocal.timings = on }
+
+    fun loadTxLocal(epId: String) {
+        if (epId in txSource) return
+        viewModelScope.launch {
+            val (text, src, eo, ep) = withContext(Dispatchers.IO) {
+                listOf(txLocal.paste(epId), txLocal.source(epId), txLocal.edit(epId, "orig"), txLocal.edit(epId, "paste"))
+            }
+            if (text is String) pasted[epId] = text
+            txEdits["$epId|orig"] = eo as TxEdit
+            txEdits["$epId|paste"] = ep as TxEdit
+            txSource[epId] = (src as? String) ?: if (text is String) "paste" else "orig"
+        }
+    }
+
+    fun savePasted(epId: String, text: String) {
+        pasted[epId] = text
+        txSource[epId] = "paste"
+        txEdits["$epId|paste"] = TxEdit() // new text, old timing fixes no longer fit
+        viewModelScope.launch(Dispatchers.IO) {
+            txLocal.savePaste(epId, text)
+            txLocal.setSource(epId, "paste")
+            txLocal.saveEdit(epId, "paste", TxEdit())
+        }
+    }
+
+    fun removePasted(epId: String) {
+        pasted.remove(epId)
+        txSource[epId] = "orig"
+        txEdits["$epId|paste"] = TxEdit()
+        viewModelScope.launch(Dispatchers.IO) { txLocal.deletePaste(epId); txLocal.setSource(epId, "orig"); txLocal.saveEdit(epId, "paste", TxEdit()) }
+    }
+
+    fun chooseTxSource(epId: String, src: String) {
+        txSource[epId] = src
+        viewModelScope.launch(Dispatchers.IO) { txLocal.setSource(epId, src) }
+    }
+
+    /** Saves a timing fix right away. */
+    fun saveTxEdit(epId: String, source: String, e: TxEdit) {
+        txEdits["$epId|$source"] = e
+        viewModelScope.launch(Dispatchers.IO) { txLocal.saveEdit(epId, source, e) }
+    }
 
     // ---- app updates from GitHub releases ----
     var update by mutableStateOf<UpdateState>(UpdateState.Idle)

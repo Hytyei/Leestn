@@ -109,6 +109,64 @@ function mp3Start(b: Uint8Array): number {
   return 0;
 }
 
+/**
+ * Reads the first MP3 frame after the ID3 tag to learn the file's real length. A Xing/Info header gives the exact
+ * frame count (and, for VBR, a seek table); otherwise a constant bitrate gives length = bytes / rate.
+ * Feeds often state a wrong duration, which is what made timestamps drift.
+ */
+async function mp3Timing(url: string, id3: number, size: number): Promise<{ dur: number; toc?: number[] } | null> {
+  let b: Uint8Array;
+  try {
+    b = await readRange(url, id3, Math.min(size, id3 + 4096));
+  } catch {
+    return null;
+  }
+  const i = mp3Start(b);
+  const len = mp3FrameLen(b, i);
+  if (!len) return null;
+  const ver = (b[i + 1] >> 3) & 3;
+  const bi = b[i + 2] >> 4;
+  const si = (b[i + 2] >> 2) & 3;
+  const mono = ((b[i + 3] >> 6) & 3) === 3;
+  const sr = (MP3_SR as any)[ver][si] as number;
+  const kbps = (ver === 3 ? MP3_BR[1] : MP3_BR[2])[bi];
+  const spf = ver === 3 ? 1152 : 576;
+  const at = i + 4 + (ver === 3 ? (mono ? 17 : 32) : mono ? 9 : 17);
+  const tag = String.fromCharCode(...b.subarray(at, at + 4));
+  if ((tag === "Xing" || tag === "Info") && at + 12 <= b.length) {
+    const flags = b[at + 7];
+    let p = at + 8;
+    const u32 = (o: number) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+    if (flags & 1) {
+      const frames = u32(p);
+      p += 4;
+      if (flags & 2) p += 4;
+      const dur = (frames * spf) / sr;
+      if (dur > 1) {
+        const toc = tag === "Xing" && flags & 4 && p + 100 <= b.length ? Array.from(b.subarray(p, p + 100)) : undefined;
+        return { dur, toc };
+      }
+    }
+    // Info/Xing without a frame count: fall through to the constant-bitrate estimate
+    const audio = size - id3 - len;
+    return audio > 0 && kbps > 0 ? { dur: (audio * 8) / (kbps * 1000) } : null;
+  }
+  const audio = size - id3;
+  return audio > 0 && kbps > 0 ? { dur: (audio * 8) / (kbps * 1000) } : null;
+}
+
+/** Time in seconds at a byte fraction, using a Xing seek table (it maps percent of time to 1/256 of the file). */
+function timeAtByteFraction(f: number, dur: number, toc?: number[]): number {
+  if (!toc || toc.length !== 100) return f * dur;
+  const target = Math.min(1, Math.max(0, f)) * 256;
+  let k = 0;
+  while (k < 99 && toc[k + 1] <= target) k++;
+  const a = toc[k];
+  const bnext = k < 99 ? toc[k + 1] : 256;
+  const frac = bnext > a ? (target - a) / (bnext - a) : 0;
+  return ((k + frac) / 100) * dur;
+}
+
 /** "de-DE" -> "de". Only plain 2 or 3 letter codes are passed on. */
 export function langCode(raw: unknown): string | undefined {
   const c = String(raw ?? "").toLowerCase().split(/[-_]/)[0];
@@ -258,6 +316,10 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
       return m;
     });
   }
+  if (found.kind === "mp3") {
+    const t = await mp3Timing(audioUrl, id3Size(head), size);
+    if (t) for (const m of messages) { m.dur = Math.round(t.dur * 10) / 10; if (t.toc) m.toc = t.toc; }
+  }
   const lang = langCode(b.language);
   if (lang) for (const m of messages) m.lang = lang;
   const total = messages.length;
@@ -322,9 +384,10 @@ async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint
     bytes = bytes.subarray(mp3Start(bytes)); // start on a whole frame so the decoder isn't confused
   }
   const audioBytes = job.sz && job.sz > id3 ? job.sz - id3 : row.chunks_total * chunkBytes;
-  const total = row.duration_sec > 0 ? row.duration_sec : (audioBytes * 8) / 128_000;
-  const offset = (total * (from - id3)) / audioBytes;
-  const span = (total * (end - from)) / audioBytes;
+  const total = job.dur && job.dur > 0 ? job.dur : row.duration_sec > 0 ? row.duration_sec : (audioBytes * 8) / 128_000;
+  const at = (byte: number) => timeAtByteFraction(Math.min(1, (byte - id3) / audioBytes), total, job.toc);
+  const offset = at(from);
+  const span = Math.max(1, at(Math.min(end, id3 + audioBytes)) - offset);
   return { bytes, offset, span };
 }
 

@@ -1,0 +1,680 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index d58c9ef..7c7dc64 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         applicationId = "app.leestn"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 17
+-        versionName = "1.5.2"
++        versionCode = 18
++        versionName = "1.5.3"
+     }
+ 
+     signingConfigs {
+diff --git a/app/src/main/java/app/leestn/data/TxEdit.kt b/app/src/main/java/app/leestn/data/TxEdit.kt
+new file mode 100644
+index 0000000..4b41217
+--- /dev/null
++++ b/app/src/main/java/app/leestn/data/TxEdit.kt
+@@ -0,0 +1,103 @@
++package app.leestn.data
++
++/**
++ * Manual timing fix for one transcript.
++ * [offset] moves every line by that many seconds. [anchors] say "line number N is at second S":
++ * the lines in between are spread evenly, so two lines far apart are enough to fix a drifting transcript.
++ */
++data class TxEdit(val offset: Int = 0, val anchors: Map<Int, Int> = emptyMap()) {
++    val isEmpty: Boolean get() = offset == 0 && anchors.isEmpty()
++}
++
++object TxEditing {
++    /** Applies the edit and returns new lines. Lines the edit can't place keep t = -1. */
++    fun apply(lines: List<TxLine>, edit: TxEdit?): List<TxLine> {
++        if (edit == null || edit.isEmpty || lines.isEmpty()) return lines
++        val n = lines.size
++        val allTimed = lines.all { it.t >= 0 }
++        // x is where each line sits on the original scale: its time, or its position in the list when it has no time.
++        val x = DoubleArray(n) { if (allTimed) lines[it].t.toDouble() else it.toDouble() }
++        val anchors = edit.anchors.filterKeys { it in 0 until n }.toSortedMap().map { (i, sec) -> x[i] to sec.toDouble() }
++            .let { list ->
++                // keep x strictly increasing so the spread never runs backwards
++                val out = ArrayList<Pair<Double, Double>>()
++                for (a in list) if (out.isEmpty() || a.first > out.last().first) out.add(a)
++                out
++            }
++        val y = DoubleArray(n) { Double.NaN }
++        when {
++            anchors.isEmpty() -> for (i in 0 until n) if (lines[i].t >= 0) y[i] = lines[i].t.toDouble()
++            anchors.size == 1 && allTimed -> {
++                val shift = anchors[0].second - anchors[0].first
++                for (i in 0 until n) y[i] = x[i] + shift
++            }
++            anchors.size == 1 -> Unit // untimed text needs two anchors to know the pace
++            else -> {
++                val a0 = anchors.first()
++                val aN = anchors.last()
++                val firstSlope = slope(anchors[0], anchors[1])
++                val lastSlope = slope(anchors[anchors.size - 2], aN)
++                for (i in 0 until n) {
++                    val xi = x[i]
++                    y[i] = when {
++                        xi <= a0.first -> if (allTimed) a0.second + (xi - a0.first) else a0.second + (xi - a0.first) * firstSlope
++                        xi >= aN.first -> if (allTimed) aN.second + (xi - aN.first) else aN.second + (xi - aN.first) * lastSlope
++                        else -> {
++                            var k = 0
++                            while (k + 1 < anchors.size - 1 && xi > anchors[k + 1].first) k++
++                            val (xa, ya) = anchors[k]
++                            val (xb, yb) = anchors[k + 1]
++                            ya + (xi - xa) * (yb - ya) / (xb - xa)
++                        }
++                    }
++                }
++            }
++        }
++        var floor = 0.0
++        return lines.mapIndexed { i, line ->
++            if (y[i].isNaN()) return@mapIndexed line.copy(t = -1)
++            val t = maxOf(floor, y[i] + edit.offset)
++            floor = t // times never go backwards
++            line.copy(t = Math.round(t).toInt())
++        }
++    }
++
++    /** Slope of a segment, never negative and never zero-division. */
++    private fun slope(a: Pair<Double, Double>, b: Pair<Double, Double>): Double {
++        val dx = b.first - a.first
++        return if (dx <= 0.0) 0.0 else maxOf(0.0, (b.second - a.second) / dx)
++    }
++
++    private val stampRe = Regex("^\\s*[\\[(]?(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})[\\])]?\\s*[-–—:]?\\s+(.*)$")
++
++    /**
++     * Turns pasted text into lines. Understands WebVTT/SRT, lines that start with a time such as "0:12 text" or
++     * "[01:02:03] text", and plain text (blank-line separated paragraphs, or one per line).
++     */
++    fun parsePasted(raw: String): List<TxLine> {
++        val text = raw.replace("\r\n", "\n").replace('\r', '\n').trim()
++        if (text.isEmpty()) return emptyList()
++        if (text.contains("-->")) {
++            val timed = TranscriptParse.fromTimed(text)
++            if (timed.isNotEmpty()) return timed
++        }
++        val rows = text.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
++        val stamped = rows.map { stampRe.find(it) }
++        if (stamped.count { it != null } * 2 >= rows.size && stamped.any { it != null }) {
++            val out = ArrayList<TxLine>()
++            for ((i, m) in stamped.withIndex()) {
++                if (m != null) {
++                    val h = m.groupValues[1].ifEmpty { "0" }.toInt()
++                    val t = h * 3600 + m.groupValues[2].toInt() * 60 + m.groupValues[3].toInt()
++                    out.add(TxLine(t, "", m.groupValues[4].trim()))
++                } else if (out.isNotEmpty()) { // a continuation line joins the one before it
++                    val last = out.removeAt(out.size - 1)
++                    out.add(last.copy(text = last.text + " " + rows[i]))
++                }
++            }
++            return out.filter { it.text.isNotBlank() }
++        }
++        val paras = if (Regex("\n\\s*\n").containsMatchIn(text)) text.split(Regex("\n\\s*\n")) else rows
++        return paras.map { it.replace(Regex("\\s+"), " ").trim() }.filter { it.isNotEmpty() }.map { TxLine(-1, "", it) }
++    }
++}
+diff --git a/app/src/main/java/app/leestn/data/TxLocal.kt b/app/src/main/java/app/leestn/data/TxLocal.kt
+new file mode 100644
+index 0000000..95ae92f
+--- /dev/null
++++ b/app/src/main/java/app/leestn/data/TxLocal.kt
+@@ -0,0 +1,48 @@
++package app.leestn.data
++
++import android.content.Context
++import org.json.JSONArray
++import org.json.JSONObject
++import java.io.File
++import java.security.MessageDigest
++
++/** Things the person does to transcripts on this device: timing fixes, pasted text, display choices. */
++class TxLocal(ctx: Context) {
++    private val prefs = ctx.getSharedPreferences("leestn_tx", Context.MODE_PRIVATE)
++    private val dir = File(ctx.filesDir, "tx").apply { mkdirs() }
++
++    var timings: Boolean
++        get() = prefs.getBoolean("timings", true)
++        set(v) { prefs.edit().putBoolean("timings", v).apply() }
++
++    /** Which transcript to show when there are two: "paste" or "orig". */
++    fun source(epId: String): String? = prefs.getString("src_" + key(epId), null)
++    fun setSource(epId: String, v: String) { prefs.edit().putString("src_" + key(epId), v).apply() }
++
++    fun edit(epId: String, source: String): TxEdit {
++        val s = prefs.getString("edit_${key(epId)}_$source", null) ?: return TxEdit()
++        return try {
++            val j = JSONObject(s)
++            val a = HashMap<Int, Int>()
++            val arr = j.optJSONArray("a") ?: JSONArray()
++            for (i in 0 until arr.length()) { val p = arr.getJSONArray(i); a[p.getInt(0)] = p.getInt(1) }
++            TxEdit(j.optInt("o"), a)
++        } catch (e: Exception) { TxEdit() }
++    }
++
++    fun saveEdit(epId: String, source: String, e: TxEdit) {
++        val k = "edit_${key(epId)}_$source"
++        if (e.isEmpty) { prefs.edit().remove(k).apply(); return }
++        val arr = JSONArray()
++        e.anchors.forEach { (i, s) -> arr.put(JSONArray().put(i).put(s)) }
++        prefs.edit().putString(k, JSONObject().put("o", e.offset).put("a", arr).toString()).apply()
++    }
++
++    private fun pasteFile(epId: String) = File(dir, key(epId) + ".txt")
++    fun paste(epId: String): String? = pasteFile(epId).takeIf { it.exists() }?.readText()
++    fun savePaste(epId: String, text: String) { pasteFile(epId).writeText(text) }
++    fun deletePaste(epId: String) { pasteFile(epId).delete() }
++
++    private fun key(epId: String): String =
++        MessageDigest.getInstance("SHA-1").digest(epId.toByteArray()).joinToString("") { "%02x".format(it) }.take(20)
++}
+diff --git a/app/src/main/java/app/leestn/state/AppViewModel.kt b/app/src/main/java/app/leestn/state/AppViewModel.kt
+index b8a48c5..fdd1850 100644
+--- a/app/src/main/java/app/leestn/state/AppViewModel.kt
++++ b/app/src/main/java/app/leestn/state/AppViewModel.kt
+@@ -33,6 +33,9 @@ import app.leestn.data.RProfile
+ import app.leestn.data.ShareCode
+ import app.leestn.data.Server
+ import app.leestn.data.Usage
++import app.leestn.data.TxEdit
++import app.leestn.data.TxEditing
++import app.leestn.data.TxLocal
+ import app.leestn.data.Updater
+ import app.leestn.data.Version
+ import app.leestn.data.AppRelease
+@@ -129,6 +132,61 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+     var serverBusy by mutableStateOf<Load>(Load.Idle)
+         private set
+ 
++    // ---- the person's own transcript changes: pasted text, timing fixes, display choices ----
++    private val txLocal = TxLocal(app)
++    var showTimings by mutableStateOf(txLocal.timings)
++        private set
++    /** Pasted transcript text per episode. */
++    val pasted = mutableStateMapOf<String, String>()
++    /** Timing fixes, keyed "episode|orig" or "episode|paste". */
++    val txEdits = mutableStateMapOf<String, TxEdit>()
++    /** "paste" or "orig": which transcript to show when an episode has both. */
++    val txSource = mutableStateMapOf<String, String>()
++
++    fun changeShowTimings(on: Boolean) { showTimings = on; txLocal.timings = on }
++
++    fun loadTxLocal(epId: String) {
++        if (epId in txSource) return
++        viewModelScope.launch {
++            val (text, src, eo, ep) = withContext(Dispatchers.IO) {
++                listOf(txLocal.paste(epId), txLocal.source(epId), txLocal.edit(epId, "orig"), txLocal.edit(epId, "paste"))
++            }
++            if (text is String) pasted[epId] = text
++            txEdits["$epId|orig"] = eo as TxEdit
++            txEdits["$epId|paste"] = ep as TxEdit
++            txSource[epId] = (src as? String) ?: if (text is String) "paste" else "orig"
++        }
++    }
++
++    fun savePasted(epId: String, text: String) {
++        pasted[epId] = text
++        txSource[epId] = "paste"
++        txEdits["$epId|paste"] = TxEdit() // new text, old timing fixes no longer fit
++        viewModelScope.launch(Dispatchers.IO) {
++            txLocal.savePaste(epId, text)
++            txLocal.setSource(epId, "paste")
++            txLocal.saveEdit(epId, "paste", TxEdit())
++        }
++    }
++
++    fun removePasted(epId: String) {
++        pasted.remove(epId)
++        txSource[epId] = "orig"
++        txEdits["$epId|paste"] = TxEdit()
++        viewModelScope.launch(Dispatchers.IO) { txLocal.deletePaste(epId); txLocal.setSource(epId, "orig"); txLocal.saveEdit(epId, "paste", TxEdit()) }
++    }
++
++    fun chooseTxSource(epId: String, src: String) {
++        txSource[epId] = src
++        viewModelScope.launch(Dispatchers.IO) { txLocal.setSource(epId, src) }
++    }
++
++    /** Saves a timing fix right away. */
++    fun saveTxEdit(epId: String, source: String, e: TxEdit) {
++        txEdits["$epId|$source"] = e
++        viewModelScope.launch(Dispatchers.IO) { txLocal.saveEdit(epId, source, e) }
++    }
++
+     // ---- app updates from GitHub releases ----
+     var update by mutableStateOf<UpdateState>(UpdateState.Idle)
+         private set
+diff --git a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+index f3373cb..2bc0cb9 100644
+--- a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
++++ b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+@@ -78,6 +78,10 @@ import app.leestn.data.Episode
+ import app.leestn.data.Kind
+ import app.leestn.data.ListItem
+ import app.leestn.state.AppViewModel
++import app.leestn.data.TxEditing
++import app.leestn.data.TxEdit
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.material3.AlertDialog
+ import app.leestn.ui.theme.LColors
+ import java.time.Instant
+ import java.time.LocalDate
+@@ -150,9 +154,18 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+     val entry = vm.log[epId]
+     val isCurrent = vm.playingId == epId
+     val tx = vm.transcripts[epId]
+-    val lines = (tx as? TxState.Ready)?.lines ?: emptyList()
+-    val synced = (tx as? TxState.Ready)?.synced == true
+-    LaunchedEffect(epId) { vm.loadTranscript(epId) }
++    LaunchedEffect(epId) { vm.loadTranscript(epId); vm.loadTxLocal(epId) }
++    // Which transcript is shown: the one the person pasted, or the original (publisher's or generated).
++    val pastedText = vm.pasted[epId]
++    val useCustom = pastedText != null && vm.txSource[epId] != "orig"
++    val txSourceKey = if (useCustom) "paste" else "orig"
++    val baseLines = if (useCustom) remember(pastedText) { TxEditing.parsePasted(pastedText ?: "") } else ((tx as? TxState.Ready)?.lines ?: emptyList())
++    val edit = vm.txEdits["$epId|$txSourceKey"]
++    val fixedLines = remember(baseLines, edit) { TxEditing.apply(baseLines, edit) }
++    val lines = if (vm.showTimings) fixedLines else remember(fixedLines) { fixedLines.map { it.copy(t = -1) } }
++    val synced = vm.showTimings && lines.any { it.t >= 0 }
++    var syncMode by rememberSaveable(epId) { mutableStateOf(false) }
++    var pasteDialog by remember { mutableStateOf(false) }
+     val activeIdx by remember(epId, lines) { derivedStateOf { if (synced && vm.playingId == epId) lines.indexOfLast { it.t >= 0 && it.t <= vm.t } else -1 } }
+     var query by rememberSaveable(epId) { mutableStateOf("") }
+     var follow by rememberSaveable { mutableStateOf(true) }
+@@ -286,16 +299,39 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                     Column(Modifier.weight(1f)) {
+                         Text("Transcript", style = MaterialTheme.typography.titleLarge)
+                         Text(
+-                            if (tx is TxState.Ready && !synced) "This transcript has no timestamps, so it can't follow playback."
++                            if (!vm.showTimings && lines.isNotEmpty()) "Timings are hidden. Turn Timings on to follow playback."
++                            else if (lines.isNotEmpty() && !synced) "This transcript has no timestamps, so it can't follow playback. Use Sync to add them."
++                            else if (useCustom) "Your pasted transcript. Tap a line to jump there."
+                             else if (tx is TxState.Ready && tx.generated) "Generated by speech recognition, so expect small mistakes. Tap a line to jump there."
+                             else "Follows playback. Tap a line to jump there.",
+                             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
+                         )
+                     }
+-                    if (tx is TxState.Ready && tx.generated && vm.connected) Chip("Redo", false) { vm.regenerateTranscript(epId) }
+-                    if (synced) Chip("Follow", follow) { follow = !follow }
++                    if (!useCustom && tx is TxState.Ready && tx.generated && vm.connected) Chip("Redo", false) { vm.regenerateTranscript(epId) }
++                    if (synced && !syncMode) Chip("Follow", follow) { follow = !follow }
+                 }
+-                when (tx) {
++                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                    if (lines.isNotEmpty()) Chip("Timings", vm.showTimings) { vm.changeShowTimings(!vm.showTimings); if (!vm.showTimings) syncMode = false }
++                    if (lines.isNotEmpty() && vm.showTimings) Chip("Sync", syncMode) { syncMode = !syncMode }
++                    Chip(if (pastedText != null) "Edit pasted text" else "Paste text", false) { pasteDialog = true }
++                    if (pastedText != null && tx is TxState.Ready) {
++                        Chip("Original", !useCustom) { vm.chooseTxSource(epId, "orig") }
++                        Chip("Pasted", useCustom) { vm.chooseTxSource(epId, "paste") }
++                    }
++                }
++                if (syncMode && vm.showTimings && lines.isNotEmpty()) SyncPanel(
++                    vm = vm, epId = epId, isCurrent = isCurrent, source = txSourceKey, edit = edit ?: TxEdit(),
++                    untimed = baseLines.none { it.t >= 0 }, anchorCount = (edit ?: TxEdit()).anchors.size,
++                )
++                val searchField: @Composable () -> Unit = {
++                    OutlinedTextField(
++                        value = query, onValueChange = { query = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
++                        placeholder = { Text("Search transcript") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
++                        shape = RoundedCornerShape(99.dp),
++                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
++                    )
++                }
++                if (useCustom) searchField() else when (tx) {
+                     null, TxState.Loading -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                         repeat(3) { SkeletonBox(Modifier.fillMaxWidth(if (it == 2) 0.6f else 1f).height(14.dp), 4.dp) }
+                     }
+@@ -325,12 +361,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                         )
+                     }
+                     is TxState.Failed -> ErrorState(if (tx.fromServer) "Transcription failed. ${tx.message}" else "Couldn't load the transcript. ${tx.message}", onRetry = { vm.retryTranscript(epId) }, modifier = Modifier.padding(0.dp))
+-                    is TxState.Ready -> OutlinedTextField(
+-                        value = query, onValueChange = { query = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+-                        placeholder = { Text("Search transcript") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
+-                        shape = RoundedCornerShape(99.dp),
+-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
+-                    )
++                    is TxState.Ready -> searchField()
+                 }
+             }
+         } }
+@@ -361,12 +392,30 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                             if (line.who.isNotBlank()) Text(line.who, style = MaterialTheme.typography.labelLarge, color = LColors.Text3, fontSize = 12.sp)
+                             Text(highlight(line.text, q), style = MaterialTheme.typography.bodyLarge)
+                         }
++                        if (syncMode && vm.showTimings) {
++                            val pinned = edit?.anchors?.containsKey(i) == true
++                            Box(
++                                Modifier.padding(end = 8.dp, top = 8.dp).align(Alignment.Top).clip(RoundedCornerShape(99.dp))
++                                    .background(if (pinned) LColors.Red else LColors.Surface3)
++                                    .pressable(enabled = isCurrent) {
++                                        val cur = edit ?: TxEdit()
++                                        vm.saveTxEdit(epId, txSourceKey, cur.copy(anchors = cur.anchors + (i to vm.t.toInt())))
++                                    }
++                                    .padding(horizontal = 10.dp, vertical = 6.dp),
++                            ) { Text(if (pinned) "Set ✓" else "Set", style = MaterialTheme.typography.labelMedium, color = if (pinned) Color.White else LColors.Text2) }
++                        }
+                     }
+                 }
+             }
+         }
+     }
+ 
++    if (pasteDialog) PasteDialog(
++        initial = pastedText ?: "",
++        onSave = { vm.savePasted(epId, it); pasteDialog = false },
++        onRemove = if (pastedText != null) ({ vm.removePasted(epId); pasteDialog = false }) else null,
++        onClose = { pasteDialog = false },
++    )
+     if (listSheet) AddToListSheet(vm, ListItem.Ep(epId)) { listSheet = false }
+     if (picker) {
+         val state = rememberDatePickerState(
+@@ -386,3 +435,57 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+         ) { DatePicker(state = state) }
+     }
+ }
++
++
++/** Controls shown while fixing timings by hand. Every change is saved on this device straight away. */
++@Composable
++private fun SyncPanel(vm: AppViewModel, epId: String, isCurrent: Boolean, source: String, edit: TxEdit, untimed: Boolean, anchorCount: Int) {
++    Column(
++        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(LColors.Surface).padding(14.dp),
++        verticalArrangement = Arrangement.spacedBy(10.dp),
++    ) {
++        Text("Fix the timing", style = MaterialTheme.typography.titleSmall)
++        Text(
++            if (untimed) "This text has no timings. Play the episode and tap Set on the line you are hearing. Set at least two lines, far apart (for example near the start and near the end); the lines between are spread evenly."
++            else "Play the episode and tap Set on the line you are hearing now. One Set moves everything; two far apart also fix drifting. Changes are saved on this device.",
++            style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
++        )
++        if (!isCurrent) Text("Start playing this episode first, so Set knows the position.", style = MaterialTheme.typography.bodySmall, color = LColors.Red)
++        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++            for (d in listOf(-5, -1, 1, 5)) {
++                Chip((if (d > 0) "+" else "") + "$d s", false) { vm.saveTxEdit(epId, source, edit.copy(offset = edit.offset + d)) }
++            }
++            Chip("Reset", false) { vm.saveTxEdit(epId, source, TxEdit()) }
++        }
++        Text(
++            "Offset ${if (edit.offset > 0) "+" else ""}${edit.offset} s · $anchorCount line${if (anchorCount == 1) "" else "s"} set",
++            style = MaterialTheme.typography.labelSmall, color = LColors.Text3,
++        )
++    }
++}
++
++@Composable
++private fun PasteDialog(initial: String, onSave: (String) -> Unit, onRemove: (() -> Unit)?, onClose: () -> Unit) {
++    var text by rememberSaveable { mutableStateOf(initial) }
++    AlertDialog(
++        onDismissRequest = onClose,
++        containerColor = LColors.Surface,
++        title = { Text("Paste a transcript") },
++        text = {
++            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
++                Text(
++                    "Paste the text. Plain text works (blank lines or new lines split it into paragraphs). Lines that start with a time, like 0:12 or [01:02:03], or WebVTT/SRT files, keep their timings. Without timings, use Sync to add them.",
++                    style = MaterialTheme.typography.bodySmall, color = LColors.Text2,
++                )
++                OutlinedTextField(
++                    value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 320.dp),
++                    placeholder = { Text("Paste here…") }, shape = RoundedCornerShape(14.dp),
++                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
++                )
++                if (onRemove != null) TextButton(onClick = onRemove) { Text("Remove pasted text", color = LColors.Red) }
++            }
++        },
++        confirmButton = { TextButton(onClick = { onSave(text) }, enabled = text.isNotBlank()) { Text("Save") } },
++        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
++    )
++}
+diff --git a/backend/package.json b/backend/package.json
+index 9ffa52b..bea5463 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "leestn-api",
+-  "version": "1.5.2",
++  "version": "1.5.3",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/backend/src/index.ts b/backend/src/index.ts
+index c8a01ef..e13e1ba 100644
+--- a/backend/src/index.ts
++++ b/backend/src/index.ts
+@@ -11,7 +11,7 @@ async function route(req: Request, env: Env): Promise<Response> {
+   const m = req.method;
+   let r: RegExpMatchArray | null;
+ 
+-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.2" });
++  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.3" });
+ 
+   // Transcripts (invite key or account token)
+   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
+diff --git a/backend/src/transcripts.ts b/backend/src/transcripts.ts
+index 70c8933..6779d5a 100644
+--- a/backend/src/transcripts.ts
++++ b/backend/src/transcripts.ts
+@@ -109,6 +109,64 @@ function mp3Start(b: Uint8Array): number {
+   return 0;
+ }
+ 
++/**
++ * Reads the first MP3 frame after the ID3 tag to learn the file's real length. A Xing/Info header gives the exact
++ * frame count (and, for VBR, a seek table); otherwise a constant bitrate gives length = bytes / rate.
++ * Feeds often state a wrong duration, which is what made timestamps drift.
++ */
++async function mp3Timing(url: string, id3: number, size: number): Promise<{ dur: number; toc?: number[] } | null> {
++  let b: Uint8Array;
++  try {
++    b = await readRange(url, id3, Math.min(size, id3 + 4096));
++  } catch {
++    return null;
++  }
++  const i = mp3Start(b);
++  const len = mp3FrameLen(b, i);
++  if (!len) return null;
++  const ver = (b[i + 1] >> 3) & 3;
++  const bi = b[i + 2] >> 4;
++  const si = (b[i + 2] >> 2) & 3;
++  const mono = ((b[i + 3] >> 6) & 3) === 3;
++  const sr = (MP3_SR as any)[ver][si] as number;
++  const kbps = (ver === 3 ? MP3_BR[1] : MP3_BR[2])[bi];
++  const spf = ver === 3 ? 1152 : 576;
++  const at = i + 4 + (ver === 3 ? (mono ? 17 : 32) : mono ? 9 : 17);
++  const tag = String.fromCharCode(...b.subarray(at, at + 4));
++  if ((tag === "Xing" || tag === "Info") && at + 12 <= b.length) {
++    const flags = b[at + 7];
++    let p = at + 8;
++    const u32 = (o: number) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
++    if (flags & 1) {
++      const frames = u32(p);
++      p += 4;
++      if (flags & 2) p += 4;
++      const dur = (frames * spf) / sr;
++      if (dur > 1) {
++        const toc = tag === "Xing" && flags & 4 && p + 100 <= b.length ? Array.from(b.subarray(p, p + 100)) : undefined;
++        return { dur, toc };
++      }
++    }
++    // Info/Xing without a frame count: fall through to the constant-bitrate estimate
++    const audio = size - id3 - len;
++    return audio > 0 && kbps > 0 ? { dur: (audio * 8) / (kbps * 1000) } : null;
++  }
++  const audio = size - id3;
++  return audio > 0 && kbps > 0 ? { dur: (audio * 8) / (kbps * 1000) } : null;
++}
++
++/** Time in seconds at a byte fraction, using a Xing seek table (it maps percent of time to 1/256 of the file). */
++function timeAtByteFraction(f: number, dur: number, toc?: number[]): number {
++  if (!toc || toc.length !== 100) return f * dur;
++  const target = Math.min(1, Math.max(0, f)) * 256;
++  let k = 0;
++  while (k < 99 && toc[k + 1] <= target) k++;
++  const a = toc[k];
++  const bnext = k < 99 ? toc[k + 1] : 256;
++  const frac = bnext > a ? (target - a) / (bnext - a) : 0;
++  return ((k + frac) / 100) * dur;
++}
++
+ /** "de-DE" -> "de". Only plain 2 or 3 letter codes are passed on. */
+ export function langCode(raw: unknown): string | undefined {
+   const c = String(raw ?? "").toLowerCase().split(/[-_]/)[0];
+@@ -258,6 +316,10 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
+       return m;
+     });
+   }
++  if (found.kind === "mp3") {
++    const t = await mp3Timing(audioUrl, id3Size(head), size);
++    if (t) for (const m of messages) { m.dur = Math.round(t.dur * 10) / 10; if (t.toc) m.toc = t.toc; }
++  }
+   const lang = langCode(b.language);
+   if (lang) for (const m of messages) m.lang = lang;
+   const total = messages.length;
+@@ -322,9 +384,10 @@ async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint
+     bytes = bytes.subarray(mp3Start(bytes)); // start on a whole frame so the decoder isn't confused
+   }
+   const audioBytes = job.sz && job.sz > id3 ? job.sz - id3 : row.chunks_total * chunkBytes;
+-  const total = row.duration_sec > 0 ? row.duration_sec : (audioBytes * 8) / 128_000;
+-  const offset = (total * (from - id3)) / audioBytes;
+-  const span = (total * (end - from)) / audioBytes;
++  const total = job.dur && job.dur > 0 ? job.dur : row.duration_sec > 0 ? row.duration_sec : (audioBytes * 8) / 128_000;
++  const at = (byte: number) => timeAtByteFraction(Math.min(1, (byte - id3) / audioBytes), total, job.toc);
++  const offset = at(from);
++  const span = Math.max(1, at(Math.min(end, id3 + audioBytes)) - offset);
+   return { bytes, offset, span };
+ }
+ 
+diff --git a/backend/src/types.ts b/backend/src/types.ts
+index a5246b6..8e5d264 100644
+--- a/backend/src/types.ts
++++ b/backend/src/types.ts
+@@ -30,6 +30,9 @@ export interface ChunkJob {
+   /** MP3: size of the ID3 tag at the start of the file (cover art can be large) and the total file size. */
+   id3?: number;
+   sz?: number;
++  /** MP3: real length in seconds from the file's own header (more reliable than the feed), and the VBR seek table if it has one. */
++  dur?: number;
++  toc?: number[];
+ }
+ 
+ export interface Segment {
+diff --git a/backend/test/quality.ts b/backend/test/quality.ts
+index 038744a..5e07bdf 100644
+--- a/backend/test/quality.ts
++++ b/backend/test/quality.ts
+@@ -3,6 +3,9 @@ import { aiInputs, call, drain, files, finish, makeDb, makeEnv, ok, aiCalls, set
+ 
+ const { DB } = makeDb();
+ const env = makeEnv(DB);
++env.MAX_PER_USER_PER_DAY = "100";
++env.MAX_TRANSCRIPTS_PER_DAY = "100";
++env.WHISPER_DAILY_MINUTES = "100000";
+ const T = (await call(env, "POST", "/v1/users", "secret", { handle: "qual", name: "Q" })).j.token;
+ const CH = 65_536;
+ 
+@@ -90,6 +93,34 @@ ok("asking again after a failure is accepted", r.s === 202, r);
+ await drain(env);
+ r = await call(env, "GET", "/v1/transcripts/rf", T);
+ ok("and now it works", r.j.status === "ready" && r.j.lines.length > 0, r.j);
++// --- timing comes from the file itself, not from the feed's (often wrong) duration ---
++function withXing(frames: number, kind = "Xing") {
++  const f = mp3(frames + 1);
++  const at = 4 + 32;
++  f.fill(0, 4, 417);
++  f.set([...kind].map((c) => c.charCodeAt(0)), at);
++  f[at + 7] = 7; // frames, bytes, toc
++  f.set([(frames >>> 24) & 255, (frames >>> 16) & 255, (frames >>> 8) & 255, frames & 255], at + 8);
++  for (let k = 0; k < 100; k++) f[at + 16 + k] = Math.floor((k * 256) / 100);
++  return f;
++}
++async function lastStart(name: string, bytes: Uint8Array, clientSec: number) {
++  files.set(name, { bytes, type: "audio/mpeg" });
++  setAi(() => ({ segments: [{ start: 0, end: 1, text: " Wort." }] }));
++  await call(env, "POST", "/v1/transcripts", T, { epId: name, audioUrl: "https://cdn.example.com/" + name, durationSec: clientSec });
++  await drain(env);
++  const out = await call(env, "GET", "/v1/transcripts/" + name, T);
++  return (out.j.lines as { t: number }[]).map((l) => l.t);
++}
++let t1 = await lastStart("xing.mp3", withXing(1000), 5000); // real length 26.1 s
++ok("Xing frame count beats a wrong feed duration", Math.max(...t1) <= 27 && Math.max(...t1) >= 20, t1);
++let t2 = await lastStart("cbr.mp3", mp3(1000), 5000); // 128 kbps constant: 26 s
++ok("constant bitrate beats a wrong feed duration", Math.max(...t2) <= 27 && Math.max(...t2) >= 20, t2);
++let t3 = await lastStart("nofeed.mp3", mp3(1000), 0);
++ok("works with no feed duration at all", Math.max(...t3) <= 27 && Math.max(...t3) >= 20, t3);
++let t4 = await lastStart("info.mp3", withXing(1000, "Info"), 5000);
++ok("Info (constant bitrate) header works", Math.max(...t4) <= 27 && Math.max(...t4) >= 20, t4);
++
+ // --- redo a finished transcript on request only ---
+ reset();
+ setAi(() => ({ segments: [{ start: 0, end: 1, text: " Zweite Fassung." }] }));
+diff --git a/release/RELEASE-1.5.3.md b/release/RELEASE-1.5.3.md
+new file mode 100644
+index 0000000..28da8c0
+--- /dev/null
++++ b/release/RELEASE-1.5.3.md
+@@ -0,0 +1,44 @@
++# Release 1.5.3: fix transcript timing by hand, hide timings, paste your own text
++
++**What changes for people** (on an episode's transcript, a row of buttons appears under the title)
++
++1. **Sync** (manual timing fix, saved on your phone). Play the episode, tap **Set** on the line you are hearing now. One Set moves the whole transcript; two Sets far apart (say near the start and near the end) also fix drift, and the lines in between are spread evenly. **−5 s, −1 s, +1 s, +5 s** nudge everything, **Reset** undoes it. Every change is saved immediately, per episode.
++2. **Timings toggle.** Off shows the transcript as plain text with no times and no follow-along. On brings the timings back.
++3. **Paste text.** Paste a transcript from anywhere. Plain text works (blank lines or new lines make paragraphs). Lines that start with a time (`0:12 text`, `[01:02:03] text`) or WebVTT/SRT files keep their timings. Pasted text without timings can be given timings with Sync (Set at least two lines). When an episode has both an original and a pasted transcript, **Original / Pasted** buttons switch between them. Pasted text and timing fixes are stored only on your device.
++4. **Better automatic timing for MP3 (server).** The server used the duration from the podcast's feed to place each part, and feeds are often wrong (ads, re-encodes), so timestamps drifted. It now reads the MP3's own header: the exact frame count from a Xing/Info header (and the seek table for variable bitrate), or the constant bitrate. The feed's duration is only a fallback.
++
++Already-generated transcripts keep their old (wrong) timings. For those, either press **Redo** (uses free Whisper time) or fix them with Sync.
++
++| Question | Answer |
++| --- | --- |
++| Database migration needed? | **No.** No tables or columns change. Do not run a migration. (If you never deployed 1.5.0, the script will still show `0003_usage_meter.sql` and apply it after a backup and your `YES`.) |
++| Worker deployment needed? | **Yes**, for the better MP3 timing only. Sync, Timings and Paste work without it. |
++| Android release needed? | **Yes.** |
++| New secrets, bindings, dependencies? | None. `wrangler.toml` untouched. |
++
++## Steps
++
++Patches in the zip: `leestn-v1.5.3.patch` (if you applied 1.5.2) or `leestn-v1.5.3-from-1.0.patch` (everything). Check, then apply (files on your PC only):
++
++    git apply --check <patch name>
++    git apply <patch name>
++
++`git status` must not list `backend/wrangler.toml`. Then:
++
++    powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
++
++It runs the tests, lists waiting migrations (expect none), asks `YES` for a backup, asks `YES` to deploy the existing `leestn-api`, and checks `/health` shows `1.5.3`.
++
++App: `git add -A`, commit, push, `git tag v1.5.3`, `git push origin v1.5.3`; then Settings → About → Check for updates.
++
++## Rollback
++
++Code only: `npx wrangler rollback` in `backend`. No data changes in this release. On the phone, your pasted text and timing fixes live in the app's private storage; they survive updates and are removed only if you erase the app's data.
++
++## Risks
++
++- **The Android code has never been compiled by me.** Last time a build error slipped in; this release adds a lot of new screen code, so a build error is possible. Paste it and I'll fix it right away.
++- The timing logic (spreading lines between your Set points, pasted-text parsing) is tested by compiling it with the real Kotlin compiler and running it, but the buttons and layout have not been run on a device.
++- The new MP3 timing is tested with synthetic files (Xing, Info and constant-bitrate headers). Variable-bitrate files without a Xing header are still estimated as constant bitrate and can drift; Sync fixes those.
++- Transcripts with ads inserted dynamically can differ between downloads, so the same episode can have a different offset at different times. Sync is saved per device.
++- Syncing and pasting are not shared with friends or the server; they are only on your phone.
+diff --git a/release/release-backend.ps1 b/release/release-backend.ps1
+index 86ea876..1f177b7 100644
+--- a/release/release-backend.ps1
++++ b/release/release-backend.ps1
+@@ -157,4 +157,4 @@ try {
+ finally { Pop-Location }
+ 
+ Say 'Done'
+-Info 'If anything looks wrong, see release\RELEASE-1.5.2.md, section "If something goes wrong".'
++Info 'If anything looks wrong, see release\RELEASE-1.5.3.md, section "If something goes wrong".'
