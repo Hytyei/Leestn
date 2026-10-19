@@ -22,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -180,6 +182,9 @@ fun HomeScreen(
                             ) {
                                 Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
                                 Text("Resume", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                            }
+                            IconButton(onClick = { vm.removeFromContinue(ep.id) }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Rounded.Close, "Remove from Continue listening", tint = LColors.Text3, modifier = Modifier.size(18.dp))
                             }
                         }
                     }

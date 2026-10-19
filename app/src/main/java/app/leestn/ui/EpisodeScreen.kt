@@ -292,6 +292,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
                         )
                     }
+                    if (tx is TxState.Ready && tx.generated && vm.connected) Chip("Redo", false) { vm.regenerateTranscript(epId) }
                     if (synced) Chip("Follow", follow) { follow = !follow }
                 }
                 when (tx) {
@@ -323,7 +324,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                             style = MaterialTheme.typography.bodyMedium, color = LColors.Text3,
                         )
                     }
-                    is TxState.Failed -> ErrorState("Couldn't load the transcript. ${tx.message}", onRetry = { vm.retryTranscript(epId) }, modifier = Modifier.padding(0.dp))
+                    is TxState.Failed -> ErrorState(if (tx.fromServer) "Transcription failed. ${tx.message}" else "Couldn't load the transcript. ${tx.message}", onRetry = { vm.retryTranscript(epId) }, modifier = Modifier.padding(0.dp))
                     is TxState.Ready -> OutlinedTextField(
                         value = query, onValueChange = { query = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Search transcript") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },

@@ -789,25 +789,28 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             "ready" -> transcripts[ep.id] =
                 if (st.lines.isEmpty()) TxState.Failed("The generated transcript is empty") else TxState.Ready(st.lines, true, generated = true)
             "queued", "processing" -> { transcripts[ep.id] = TxState.Generating(st.progress); pollTranscript(ep) }
-            "failed" -> transcripts[ep.id] = TxState.Failed(st.error ?: "Transcription failed")
+            "failed" -> transcripts[ep.id] = TxState.Failed(st.error ?: "Transcription failed", fromServer = true)
             else -> transcripts[ep.id] = TxState.Offer()
         }
     }
 
     /** Ask the server to transcribe this episode's audio. It keeps working if you leave the page. */
-    fun generateTranscript(epId: String) {
+    /** The text came out wrong: transcribe again (uses the server's free time again). */
+    fun regenerateTranscript(epId: String) = generateTranscript(epId, force = true)
+
+    fun generateTranscript(epId: String, force: Boolean = false) {
         val ep = Catalog.episode(epId) ?: return
         if (!backendReady()) return
         transcripts[epId] = TxState.Generating(0f)
         viewModelScope.launch {
             try {
-                val st = withContext(Dispatchers.IO) { Backend.requestTranscript(serverUrl, serverToken, ep.id, ep.audioUrl, ep.durationSec) }
+                val st = withContext(Dispatchers.IO) { Backend.requestTranscript(serverUrl, serverToken, ep.id, ep.audioUrl, ep.durationSec, Catalog.show(ep.pid)?.language.orEmpty(), force) }
                 applyServerTx(ep, st)
                 loadUsage()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                transcripts[epId] = TxState.Failed(e.message ?: "Couldn't start transcription")
+                transcripts[epId] = TxState.Failed(e.message ?: "Couldn't start transcription", fromServer = true)
                 loadUsage()
             }
         }
@@ -832,13 +835,25 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                     // network blip: keep trying
                 }
             }
-            transcripts[ep.id] = TxState.Failed("Transcription is taking too long")
+            transcripts[ep.id] = TxState.Failed("Transcription is taking too long", fromServer = true)
         }
     }
 
+    /** Try again. After a failed server transcription this starts a new one; otherwise it reloads. */
     fun retryTranscript(epId: String) {
-        transcripts.remove(epId)
-        loadTranscript(epId)
+        val cur = transcripts[epId]
+        if (cur is TxState.Failed && cur.fromServer && backendReady()) {
+            generateTranscript(epId)
+        } else {
+            transcripts.remove(epId)
+            loadTranscript(epId)
+        }
+    }
+
+    /** Hide an episode from Continue listening. Its position is forgotten. */
+    fun removeFromContinue(epId: String) {
+        prog.remove(epId)
+        save(widgets = true)
     }
 
     // ---------- logging and ratings ----------

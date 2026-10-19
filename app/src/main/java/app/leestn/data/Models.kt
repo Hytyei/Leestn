@@ -59,6 +59,8 @@ class Podcast(
     hueB: Float? = null,
     motif: Motif? = null,
     val description: String = tagline,
+    /** Spoken language from the feed, e.g. "de" or "en-us". Empty when the feed doesn't say. */
+    val language: String = "",
 ) {
     val hueA: Float = hueA ?: hueFor(id, 1)
     val hueB: Float = hueB ?: hueFor(id, 2)

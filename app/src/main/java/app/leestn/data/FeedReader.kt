@@ -11,6 +11,7 @@ class ParsedFeed(
     val imageUrl: String,
     val genre: String,
     val items: List<RawItem>,
+    val language: String = "",
 )
 
 /**
@@ -28,6 +29,7 @@ object FeedReader {
         val text = StringBuilder()
         var inItem = false
         var inImage = false
+        var language = ""
 
         var title = ""
         var author = ""
@@ -137,6 +139,7 @@ object FeedReader {
                             "url" -> if (inImage && imageFallback.isEmpty()) imageFallback = t
                             "title" -> if (depth == 3 && !inImage && title.isEmpty()) title = t
                             "itunes:author" -> if (author.isEmpty()) author = t
+                            "language" -> if (depth == 3 && language.isEmpty()) language = t
                             "description" -> if (depth == 3) desc = t
                             "itunes:summary" -> if (depth == 3) summary = t
                         }
@@ -154,6 +157,7 @@ object FeedReader {
             imageUrl = image.ifEmpty { imageFallback },
             genre = genre,
             items = items,
+            language = language,
         )
     }
 }

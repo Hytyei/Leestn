@@ -102,6 +102,7 @@ object Catalog {
             eps = res.episodes,
             cats = res.cats,
             description = plain.ifBlank { hint.description },
+            language = parsed.language,
         )
     }
 }

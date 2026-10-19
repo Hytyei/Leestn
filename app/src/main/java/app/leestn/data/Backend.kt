@@ -43,8 +43,8 @@ object Backend {
     fun transcript(base: String, key: String, epId: String): Tx =
         run(builder("$base/v1/transcripts/${java.net.URLEncoder.encode(epId, "UTF-8")}", key).get().build())
 
-    fun requestTranscript(base: String, key: String, epId: String, audioUrl: String, durationSec: Int): Tx {
-        val body = JSONObject().put("epId", epId).put("audioUrl", audioUrl).put("durationSec", durationSec).toString()
+    fun requestTranscript(base: String, key: String, epId: String, audioUrl: String, durationSec: Int, language: String = "", force: Boolean = false): Tx {
+        val body = JSONObject().put("epId", epId).put("audioUrl", audioUrl).put("durationSec", durationSec).put("language", language).put("force", force).toString()
         return run(builder("$base/v1/transcripts", key).post(body.toRequestBody("application/json".toMediaType())).build())
     }
 }

@@ -25,6 +25,11 @@ export interface ChunkJob {
   };
   /** Raw AAC (ADTS) files are cut at byte positions like MP3. */
   fmt?: "adts";
+  /** Spoken language (ISO code such as "de"), from the podcast feed. Stops the model guessing the language slice by slice. */
+  lang?: string;
+  /** MP3: size of the ID3 tag at the start of the file (cover art can be large) and the total file size. */
+  id3?: number;
+  sz?: number;
 }
 
 export interface Segment {

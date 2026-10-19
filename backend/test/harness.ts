@@ -26,13 +26,14 @@ export function makeDb(upTo?: string) {
 
 export const queued: any[] = [];
 export const aiCalls: Uint8Array[] = [];
-export let aiImpl: (audio: Uint8Array) => any = () => ({ text: "Hello there. This is a test.", segments: [{ start: 0, end: 2, text: " Hello there." }, { start: 2, end: 4, text: " This is a test." }] });
-export function setAi(f: (audio: Uint8Array) => any) { aiImpl = f; }
+export const aiInputs: any[] = [];
+export let aiImpl: (audio: Uint8Array, input?: any) => any = () => ({ text: "Hello there. This is a test.", segments: [{ start: 0, end: 2, text: " Hello there." }, { start: 2, end: 4, text: " This is a test." }] });
+export function setAi(f: (audio: Uint8Array, input?: any) => any) { aiImpl = f; }
 
 export function makeEnv(DB: any): any {
   return {
     DB,
-    AI: { run: async (_m: string, i: any) => { const bin = Uint8Array.from(atob(i.audio), (c) => c.charCodeAt(0)); aiCalls.push(bin); return aiImpl(bin); } },
+    AI: { run: async (_m: string, i: any) => { const bin = Uint8Array.from(atob(i.audio), (c) => c.charCodeAt(0)); aiCalls.push(bin); aiInputs.push({ ...i, audio: undefined }); return aiImpl(bin, i); } },
     TRANSCRIBE: { sendBatch: async (m: any[]) => { for (const x of m) { if (JSON.stringify(x).length > 128_000) throw new Error("queue message too large"); } if (m.length > 100) throw new Error("batch too big"); queued.push(...m); } },
     INVITE_KEY: "secret", MAX_TRANSCRIPTS_PER_DAY: "40", MAX_PER_USER_PER_DAY: "8", CHUNK_BYTES: "65536", MAX_AUDIO_MB: "150", ALLOW_ORIGIN: "*",
   };

@@ -71,6 +71,50 @@ async function readRange(url: string, from: number, to: number): Promise<Uint8Ar
   return new Uint8Array(await r.arrayBuffer()).subarray(0, to - from);
 }
 
+/** Size of an ID3v2 tag at the start of a file, from its 10-byte header (0 when there is none). */
+function id3Size(head: Uint8Array): number {
+  if (head.length < 10 || head[0] !== 0x49 || head[1] !== 0x44 || head[2] !== 0x33) return 0;
+  const n = ((head[6] & 0x7f) << 21) | ((head[7] & 0x7f) << 14) | ((head[8] & 0x7f) << 7) | (head[9] & 0x7f);
+  return 10 + n + (head[5] & 0x10 ? 10 : 0);
+}
+
+const MP3_BR = {
+  1: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+  2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+} as const;
+const MP3_SR = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] } as const;
+
+/** Length in bytes of the MPEG Layer III frame starting at i, or 0 if there is no valid header there. */
+function mp3FrameLen(b: Uint8Array, i: number): number {
+  if (i + 4 > b.length || b[i] !== 0xff || (b[i + 1] & 0xe0) !== 0xe0) return 0;
+  const ver = (b[i + 1] >> 3) & 3; // 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5
+  const layer = (b[i + 1] >> 1) & 3; // 1 = Layer III
+  if (ver === 1 || layer !== 1) return 0;
+  const bi = b[i + 2] >> 4;
+  const si = (b[i + 2] >> 2) & 3;
+  if (bi === 0 || bi === 15 || si === 3) return 0;
+  const br = (ver === 3 ? MP3_BR[1] : MP3_BR[2])[bi] * 1000;
+  const sr = (MP3_SR as any)[ver][si] as number;
+  const pad = (b[i + 2] >> 1) & 1;
+  return Math.floor(((ver === 3 ? 144 : 72) * br) / sr) + pad;
+}
+
+/** Index of the first real MP3 frame (confirmed by a second frame right after it). Slices are cut at arbitrary bytes. */
+function mp3Start(b: Uint8Array): number {
+  const limit = Math.min(b.length - 4, 8192);
+  for (let i = 0; i < limit; i++) {
+    const l = mp3FrameLen(b, i);
+    if (l && mp3FrameLen(b, i + l)) return i;
+  }
+  return 0;
+}
+
+/** "de-DE" -> "de". Only plain 2 or 3 letter codes are passed on. */
+export function langCode(raw: unknown): string | undefined {
+  const c = String(raw ?? "").toLowerCase().split(/[-_]/)[0];
+  return /^[a-z]{2,3}$/.test(c) ? c : undefined;
+}
+
 type Kind = "mp3" | "adts" | "mp4" | "unsupported";
 
 /** Looks at the first bytes of the file, because the URL and content type are often wrong. */
@@ -164,7 +208,9 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
   checkAudioUrl(audioUrl);
 
   const existing = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
-  if (existing && existing.status !== "failed") return json(env, view(existing));
+  // A failed job can always be asked again. A finished one only when the caller explicitly asks to redo it (text came out wrong).
+  const redo = b.force === true && existing?.status === "ready";
+  if (existing && existing.status !== "failed" && !redo) return json(env, view(existing));
 
   // Daily cap on new jobs, across all users, to keep Whisper spend predictable.
   const cap = int(env.MAX_TRANSCRIPTS_PER_DAY, 40, 0);
@@ -205,8 +251,15 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
     }
   } else {
     const n = Math.max(1, Math.ceil(size / chunkBytes));
-    messages = Array.from({ length: n }, (_, idx) => (found.kind === "adts" ? { epId, idx, fmt: "adts" as const } : { epId, idx }));
+    const tag = found.kind === "mp3" ? id3Size(head) : 0;
+    messages = Array.from({ length: n }, (_, idx) => {
+      const m: ChunkJob = found.kind === "adts" ? { epId, idx, fmt: "adts" } : { epId, idx };
+      if (found.kind === "mp3") { m.sz = size; if (tag > 0) m.id3 = tag; }
+      return m;
+    });
   }
+  const lang = langCode(b.language);
+  if (lang) for (const m of messages) m.lang = lang;
   const total = messages.length;
   const now = Date.now();
   await env.DB.batch([
@@ -255,28 +308,40 @@ async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint
     const rate = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350][a.sfi] ?? 44100;
     return { bytes, offset: slice.t0, span: (frames * 1024) / rate };
   }
-  // MP3 and raw AAC: a byte range. Timing is estimated from the episode length (or a 128 kbps guess).
-  const from = job.idx * chunkBytes;
-  let bytes = await read(from, from + chunkBytes);
+  // MP3 and raw AAC: a byte range. Timing comes from the byte position and the episode length (or a 128 kbps guess).
+  const id3 = job.id3 ?? 0;
+  const from = Math.max(job.idx * chunkBytes, id3);
+  const end = job.idx * chunkBytes + chunkBytes;
+  if (end <= from) return { bytes: new Uint8Array(0), offset: 0, span: 0 }; // this slice is all tag (cover art)
+  let bytes = await read(from, end);
   if (job.fmt === "adts") {
-    // start at the first complete frame
     let i = 0;
     while (i + 1 < bytes.length && !isAdts(bytes.subarray(i))) i++;
     bytes = bytes.subarray(i);
+  } else {
+    bytes = bytes.subarray(mp3Start(bytes)); // start on a whole frame so the decoder isn't confused
   }
-  const span = row.duration_sec > 0 ? row.duration_sec / row.chunks_total : (chunkBytes * 8) / 128_000;
-  return { bytes, offset: job.idx * span, span };
+  const audioBytes = job.sz && job.sz > id3 ? job.sz - id3 : row.chunks_total * chunkBytes;
+  const total = row.duration_sec > 0 ? row.duration_sec : (audioBytes * 8) / 128_000;
+  const offset = (total * (from - id3)) / audioBytes;
+  const span = (total * (end - from)) / audioBytes;
+  return { bytes, offset, span };
 }
 
 async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void> {
   const idx = job.idx;
   const { bytes, offset, span: exactPerChunk } = await pieceOf(env, row, job);
 
-  const out: any = await (env.AI as any).run(MODEL, { audio: bytesToBase64(bytes) });
+  if (bytes.length < 2000) {
+    // nothing to transcribe here (tag only)
+    await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, '[]')").bind(row.ep_id, idx).run();
+    return finishChunk(env, row);
+  }
+  const out: any = await runWhisper(env, bytesToBase64(bytes), job.lang);
 
   const segs: Segment[] = [];
   if (Array.isArray(out?.segments) && out.segments.length) {
-    for (const s of out.segments) {
+    for (const s of cleanSegments(out.segments)) {
       const text = String(s.text ?? "").trim();
       if (text) segs.push({ start: offset + Number(s.start ?? 0), end: offset + Number(s.end ?? 0), text });
     }
@@ -291,6 +356,10 @@ async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void>
     .bind(row.ep_id, idx, JSON.stringify(segs))
     .run();
 
+  return finishChunk(env, row);
+}
+
+async function finishChunk(env: Env, row: Row): Promise<void> {
   const done = await env.DB.prepare("SELECT COUNT(*) AS n FROM transcript_chunks WHERE ep_id = ?").bind(row.ep_id).first<{ n: number }>();
   const n = done?.n ?? 0;
   if (n >= row.chunks_total) await assemble(env, row.ep_id);
@@ -299,6 +368,40 @@ async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void>
       .bind(Math.min(0.99, n / row.chunks_total), Date.now(), row.ep_id)
       .run();
   }
+}
+
+/**
+ * Calls Whisper. A language hint stops it guessing the language for every slice (the usual cause of
+ * garbled text), and the other options reduce invented text over silence. If this model rejects the options,
+ * try once more with the plain call so a parameter problem can never stop transcripts working.
+ */
+async function runWhisper(env: Env, audio: string, lang?: string): Promise<any> {
+  const opts: Record<string, unknown> = { audio, task: "transcribe", vad_filter: true, condition_on_previous_text: false };
+  if (lang) opts.language = lang;
+  try {
+    return await (env.AI as any).run(MODEL, opts);
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    if (!/invalid|unsupported|unknown|not allowed|schema|input|param|property|language/i.test(m)) throw e;
+    return await (env.AI as any).run(MODEL, { audio });
+  }
+}
+
+/** Drops segments the model is unsure are speech, runaway repetition and the usual invented lines over silence. */
+function cleanSegments(raw: any[]): any[] {
+  const out: any[] = [];
+  let run = 0;
+  for (const s of raw) {
+    const text = String(s?.text ?? "").trim();
+    if (!text) continue;
+    if (Number(s.no_speech_prob) > 0.8 && Number(s.avg_logprob) < -0.8) continue;
+    if (Number(s.compression_ratio) > 2.6) continue;
+    const prev = out.length ? String(out[out.length - 1].text).trim().toLowerCase() : "";
+    run = prev === text.toLowerCase() ? run + 1 : 0;
+    if (run >= 2) continue; // the same line three times in a row is a loop, not speech
+    out.push(s);
+  }
+  return out;
 }
 
 async function assemble(env: Env, epId: string) {
