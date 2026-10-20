@@ -152,7 +152,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 listOf(txLocal.paste(epId), txLocal.source(epId), txLocal.edit(epId, "orig"), txLocal.edit(epId, "paste"))
             }
             if (text is String) pasted[epId] = text
-            txEdits["$epId|orig"] = eo as TxEdit
+            if ("$epId|orig" !in txEdits) txEdits["$epId|orig"] = eo as TxEdit // a fix from the server may already be here
             txEdits["$epId|paste"] = ep as TxEdit
             txSource[epId] = (src as? String) ?: if (text is String) "paste" else "orig"
         }
@@ -181,10 +181,31 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { txLocal.setSource(epId, src) }
     }
 
-    /** Saves a timing fix right away. */
+    /** Whether a timing fix for this episode is shared with everyone on the server (generated transcripts only). */
+    fun timingIsShared(epId: String, source: String): Boolean =
+        source == "orig" && connected && (transcripts[epId] as? TxState.Ready)?.generated == true
+
+    var timingSaveError by mutableStateOf<String?>(null)
+        private set
+
+    /** Saves a timing fix on this device right away, and on the server too when the transcript lives there. */
     fun saveTxEdit(epId: String, source: String, e: TxEdit) {
         txEdits["$epId|$source"] = e
-        viewModelScope.launch(Dispatchers.IO) { txLocal.saveEdit(epId, source, e) }
+        val shared = timingIsShared(epId, source)
+        val base = serverUrl
+        val tok = serverToken
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { txLocal.saveEdit(epId, source, e) }
+            if (!shared) return@launch
+            try {
+                withContext(Dispatchers.IO) { Backend.putTiming(base, tok, epId, e) }
+                timingSaveError = null
+            } catch (x: kotlinx.coroutines.CancellationException) {
+                throw x
+            } catch (x: Throwable) {
+                timingSaveError = "Saved on this phone, but not on the server yet: ${x.message ?: "no connection"}"
+            }
+        }
     }
 
     // ---- app updates from GitHub releases ----
@@ -844,8 +865,14 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private fun applyServerTx(ep: Episode, st: Backend.Tx) {
         when (st.status) {
-            "ready" -> transcripts[ep.id] =
-                if (st.lines.isEmpty()) TxState.Failed("The generated transcript is empty") else TxState.Ready(st.lines, true, generated = true)
+            "ready" -> {
+                transcripts[ep.id] =
+                    if (st.lines.isEmpty()) TxState.Failed("The generated transcript is empty") else TxState.Ready(st.lines, true, generated = true)
+                // the server's shared timing fix is the truth for generated transcripts; no fix there means no fix here
+                val shared = st.timing ?: TxEdit()
+                txEdits["${ep.id}|orig"] = shared
+                viewModelScope.launch(Dispatchers.IO) { txLocal.saveEdit(ep.id, "orig", shared) }
+            }
             "queued", "processing" -> { transcripts[ep.id] = TxState.Generating(st.progress); pollTranscript(ep) }
             "failed" -> transcripts[ep.id] = TxState.Failed(st.error ?: "Transcription failed", fromServer = true)
             else -> transcripts[ep.id] = TxState.Offer()

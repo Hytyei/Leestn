@@ -1,6 +1,6 @@
 {
   "name": "leestn-api",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "db:migrate:local": "wrangler d1 migrations apply leestn --local",
     "db:migrate:remote": "wrangler d1 migrations apply leestn --remote",
     "tail": "wrangler tail",
-    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts"
+    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts && bun run test/timing.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250214.0",

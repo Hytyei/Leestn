@@ -1,6 +1,6 @@
 import type { ChunkJob, Env } from "./types";
 import { HttpError, cors, json } from "./util";
-import { consume, getTranscript, getUsage, requestTranscript } from "./transcripts";
+import { consume, getTranscript, getUsage, putTiming, requestTranscript } from "./transcripts";
 import {
   createUser, deleteAvatar, deleteMe, feed, follow, getAvatar, me, patchMe, profile, pull, push, putAvatar, searchUsers, showRatings, wrapped,
 } from "./users";
@@ -11,11 +11,12 @@ async function route(req: Request, env: Env): Promise<Response> {
   const m = req.method;
   let r: RegExpMatchArray | null;
 
-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.3" });
+  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.4" });
 
   // Transcripts (invite key or account token)
   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
   if (p === "/v1/transcripts" && m === "POST") return requestTranscript(env, req);
+  if ((r = p.match(/^\/v1\/transcripts\/(.+)\/timing$/)) && m === "PUT") return putTiming(env, req, decodeURIComponent(r[1]));
   if ((r = p.match(/^\/v1\/transcripts\/(.+)$/)) && m === "GET") return getTranscript(env, req, decodeURIComponent(r[1]));
 
   // Accounts

@@ -17,14 +17,54 @@ interface Row {
   lines: string | null;
 }
 
-function view(row: Row | null) {
+type Timing = { offset: number; anchors: [number, number][] };
+
+function view(row: Row | null, timing?: Timing | null) {
   if (!row) return { status: "none", progress: 0, lines: [] };
   return {
     status: row.status,
     progress: row.progress,
     error: row.error ?? undefined,
     lines: row.status === "ready" && row.lines ? JSON.parse(row.lines) : [],
+    ...(timing ? { timing } : {}),
   };
+}
+
+/** The shared timing fix for this transcript, if someone saved one. */
+async function timingOf(env: Env, epId: string): Promise<Timing | null> {
+  try {
+    const r = await env.DB.prepare("SELECT offset_sec, anchors FROM transcript_edits WHERE ep_id = ?").bind(epId).first<{ offset_sec: number; anchors: string }>();
+    if (!r) return null;
+    return { offset: r.offset_sec, anchors: JSON.parse(r.anchors) };
+  } catch {
+    return null; // e.g. migration 0004 not applied yet: reading transcripts must keep working
+  }
+}
+
+/** PUT /v1/transcripts/:epId/timing — save (or clear) the shared timing fix. Any member may do it. */
+export async function putTiming(env: Env, req: Request, epId: string): Promise<Response> {
+  const { user } = await member(env, req);
+  const row = await env.DB.prepare("SELECT status FROM transcripts WHERE ep_id = ?").bind(epId).first<{ status: string }>();
+  if (!row || row.status !== "ready") throw new HttpError(404, "There is no finished transcript on the server for this episode");
+  const b = await body(req);
+  const offset = int(b.offset, 0, -3600, 3600);
+  const list = Array.isArray(b.anchors) ? (b.anchors as unknown[]).slice(0, 300) : [];
+  const anchors: [number, number][] = [];
+  for (const a of list) {
+    if (!Array.isArray(a) || a.length !== 2) continue;
+    const i = Math.trunc(Number(a[0]));
+    const sec = Math.trunc(Number(a[1]));
+    if (Number.isFinite(i) && Number.isFinite(sec) && i >= 0 && i < 200_000 && sec >= 0 && sec < 86_400) anchors.push([i, sec]);
+  }
+  if (offset === 0 && anchors.length === 0) {
+    await env.DB.prepare("DELETE FROM transcript_edits WHERE ep_id = ?").bind(epId).run();
+    return json(env, { ok: true, timing: null });
+  }
+  await env.DB.prepare(
+    `INSERT INTO transcript_edits (ep_id, offset_sec, anchors, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(ep_id) DO UPDATE SET offset_sec=excluded.offset_sec, anchors=excluded.anchors, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+  ).bind(epId, offset, JSON.stringify(anchors), user?.id ?? "key", Date.now()).run();
+  return json(env, { ok: true, timing: { offset, anchors } });
 }
 
 /** Refuse anything that isn't a public https URL, so the Worker can't be pointed at internal addresses. */
@@ -231,7 +271,7 @@ async function probe(url: string): Promise<{ size: number; type: string; head: U
 export async function getTranscript(env: Env, req: Request, epId: string): Promise<Response> {
   await member(env, req);
   const row = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
-  return json(env, view(row));
+  return json(env, view(row, row?.status === "ready" ? await timingOf(env, epId) : null));
 }
 
 export async function usageNow(env: Env) {
@@ -268,7 +308,7 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
   const existing = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
   // A failed job can always be asked again. A finished one only when the caller explicitly asks to redo it (text came out wrong).
   const redo = b.force === true && existing?.status === "ready";
-  if (existing && existing.status !== "failed" && !redo) return json(env, view(existing));
+  if (existing && existing.status !== "failed" && !redo) return json(env, view(existing, existing.status === "ready" ? await timingOf(env, epId) : null));
 
   // Daily cap on new jobs, across all users, to keep Whisper spend predictable.
   const cap = int(env.MAX_TRANSCRIPTS_PER_DAY, 40, 0);
@@ -324,6 +364,12 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
   if (lang) for (const m of messages) m.lang = lang;
   const total = messages.length;
   const now = Date.now();
+  // a new transcription has different lines, so an old shared timing fix no longer fits
+  try {
+    await env.DB.prepare("DELETE FROM transcript_edits WHERE ep_id = ?").bind(epId).run();
+  } catch {
+    /* migration 0004 not applied yet: nothing to clear */
+  }
   await env.DB.batch([
     env.DB.prepare("DELETE FROM transcript_chunks WHERE ep_id = ?").bind(epId),
     env.DB.prepare(

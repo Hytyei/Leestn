@@ -447,10 +447,15 @@ private fun SyncPanel(vm: AppViewModel, epId: String, isCurrent: Boolean, source
         Text("Fix the timing", style = MaterialTheme.typography.titleSmall)
         Text(
             if (untimed) "This text has no timings. Play the episode and tap Set on the line you are hearing. Set at least two lines, far apart (for example near the start and near the end); the lines between are spread evenly."
-            else "Play the episode and tap Set on the line you are hearing now. One Set moves everything; two far apart also fix drifting. Changes are saved on this device.",
+            else "Play the episode and tap Set on the line you are hearing now. One Set moves everything; two far apart also fix drifting.",
             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
         )
         if (!isCurrent) Text("Start playing this episode first, so Set knows the position.", style = MaterialTheme.typography.bodySmall, color = LColors.Red)
+        Text(
+            if (vm.timingIsShared(epId, source)) "Saved for everyone on your server, as well as on this phone." else "Saved on this phone only.",
+            style = MaterialTheme.typography.labelSmall, color = LColors.Good,
+        )
+        vm.timingSaveError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = LColors.Red) }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (d in listOf(-5, -1, 1, 5)) {
                 Chip((if (d > 0) "+" else "") + "$d s", false) { vm.saveTxEdit(epId, source, edit.copy(offset = edit.offset + d)) }

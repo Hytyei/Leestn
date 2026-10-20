@@ -157,4 +157,4 @@ try {
 finally { Pop-Location }
 
 Say 'Done'
-Info 'If anything looks wrong, see release\RELEASE-1.5.3.md, section "If something goes wrong".'
+Info 'If anything looks wrong, see release\RELEASE-1.5.4.md, section "If something goes wrong".'

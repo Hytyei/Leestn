@@ -1,0 +1,492 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 7c7dc64..69b1b3c 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         applicationId = "app.leestn"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 18
+-        versionName = "1.5.3"
++        versionCode = 19
++        versionName = "1.5.4"
+     }
+ 
+     signingConfigs {
+diff --git a/app/src/main/java/app/leestn/data/Backend.kt b/app/src/main/java/app/leestn/data/Backend.kt
+index 34dd0d1..f5feec0 100644
+--- a/app/src/main/java/app/leestn/data/Backend.kt
++++ b/app/src/main/java/app/leestn/data/Backend.kt
+@@ -8,7 +8,7 @@ import java.io.IOException
+ 
+ /** Talks to the Leestn Cloudflare Worker (see the backend folder). */
+ object Backend {
+-    class Tx(val status: String, val progress: Float, val error: String?, val lines: List<TxLine>)
++    class Tx(val status: String, val progress: Float, val error: String?, val lines: List<TxLine>, val timing: TxEdit? = null)
+ 
+     private fun builder(url: String, key: String): Request.Builder {
+         val b = Request.Builder().url(url).header("User-Agent", "Leestn/1.0 (Android podcast app)")
+@@ -26,7 +26,14 @@ object Backend {
+                 if (text.isNotEmpty()) lines.add(TxLine(o.optInt("t", 0), o.optString("who", ""), text))
+             }
+         }
+-        return Tx(j.optString("status", "none"), j.optDouble("progress", 0.0).toFloat(), j.optString("error").ifBlank { null }, lines)
++        val timing = j.optJSONObject("timing")?.let { t ->
++            val a = HashMap<Int, Int>()
++            t.optJSONArray("anchors")?.let { arr ->
++                for (i in 0 until arr.length()) { val p = arr.optJSONArray(i) ?: continue; a[p.optInt(0)] = p.optInt(1) }
++            }
++            TxEdit(t.optInt("offset"), a)
++        }
++        return Tx(j.optString("status", "none"), j.optDouble("progress", 0.0).toFloat(), j.optString("error").ifBlank { null }, lines, timing)
+     }
+ 
+     private fun run(req: Request): Tx {
+@@ -47,4 +54,19 @@ object Backend {
+         val body = JSONObject().put("epId", epId).put("audioUrl", audioUrl).put("durationSec", durationSec).put("language", language).put("force", force).toString()
+         return run(builder("$base/v1/transcripts", key).post(body.toRequestBody("application/json".toMediaType())).build())
+     }
++
++    /** Save the timing fix for everyone on the server (an empty fix clears it). */
++    fun putTiming(base: String, key: String, epId: String, e: TxEdit) {
++        val anchors = org.json.JSONArray()
++        e.anchors.forEach { (i, sec) -> anchors.put(org.json.JSONArray().put(i).put(sec)) }
++        val body = JSONObject().put("offset", e.offset).put("anchors", anchors).toString()
++        val req = builder("$base/v1/transcripts/${java.net.URLEncoder.encode(epId, "UTF-8")}/timing", key)
++            .put(body.toRequestBody("application/json".toMediaType())).build()
++        Http.client.newCall(req).execute().use { resp ->
++            if (!resp.isSuccessful) {
++                val msg = try { JSONObject(resp.body?.string().orEmpty()).optString("error") } catch (e: Exception) { "" }
++                throw IOException(msg.ifBlank { "Server error ${resp.code}" })
++            }
++        }
++    }
+ }
+diff --git a/app/src/main/java/app/leestn/state/AppViewModel.kt b/app/src/main/java/app/leestn/state/AppViewModel.kt
+index fdd1850..893ae09 100644
+--- a/app/src/main/java/app/leestn/state/AppViewModel.kt
++++ b/app/src/main/java/app/leestn/state/AppViewModel.kt
+@@ -152,7 +152,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+                 listOf(txLocal.paste(epId), txLocal.source(epId), txLocal.edit(epId, "orig"), txLocal.edit(epId, "paste"))
+             }
+             if (text is String) pasted[epId] = text
+-            txEdits["$epId|orig"] = eo as TxEdit
++            if ("$epId|orig" !in txEdits) txEdits["$epId|orig"] = eo as TxEdit // a fix from the server may already be here
+             txEdits["$epId|paste"] = ep as TxEdit
+             txSource[epId] = (src as? String) ?: if (text is String) "paste" else "orig"
+         }
+@@ -181,10 +181,31 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+         viewModelScope.launch(Dispatchers.IO) { txLocal.setSource(epId, src) }
+     }
+ 
+-    /** Saves a timing fix right away. */
++    /** Whether a timing fix for this episode is shared with everyone on the server (generated transcripts only). */
++    fun timingIsShared(epId: String, source: String): Boolean =
++        source == "orig" && connected && (transcripts[epId] as? TxState.Ready)?.generated == true
++
++    var timingSaveError by mutableStateOf<String?>(null)
++        private set
++
++    /** Saves a timing fix on this device right away, and on the server too when the transcript lives there. */
+     fun saveTxEdit(epId: String, source: String, e: TxEdit) {
+         txEdits["$epId|$source"] = e
+-        viewModelScope.launch(Dispatchers.IO) { txLocal.saveEdit(epId, source, e) }
++        val shared = timingIsShared(epId, source)
++        val base = serverUrl
++        val tok = serverToken
++        viewModelScope.launch {
++            withContext(Dispatchers.IO) { txLocal.saveEdit(epId, source, e) }
++            if (!shared) return@launch
++            try {
++                withContext(Dispatchers.IO) { Backend.putTiming(base, tok, epId, e) }
++                timingSaveError = null
++            } catch (x: kotlinx.coroutines.CancellationException) {
++                throw x
++            } catch (x: Throwable) {
++                timingSaveError = "Saved on this phone, but not on the server yet: ${x.message ?: "no connection"}"
++            }
++        }
+     }
+ 
+     // ---- app updates from GitHub releases ----
+@@ -844,8 +865,14 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+ 
+     private fun applyServerTx(ep: Episode, st: Backend.Tx) {
+         when (st.status) {
+-            "ready" -> transcripts[ep.id] =
+-                if (st.lines.isEmpty()) TxState.Failed("The generated transcript is empty") else TxState.Ready(st.lines, true, generated = true)
++            "ready" -> {
++                transcripts[ep.id] =
++                    if (st.lines.isEmpty()) TxState.Failed("The generated transcript is empty") else TxState.Ready(st.lines, true, generated = true)
++                // the server's shared timing fix is the truth for generated transcripts; no fix there means no fix here
++                val shared = st.timing ?: TxEdit()
++                txEdits["${ep.id}|orig"] = shared
++                viewModelScope.launch(Dispatchers.IO) { txLocal.saveEdit(ep.id, "orig", shared) }
++            }
+             "queued", "processing" -> { transcripts[ep.id] = TxState.Generating(st.progress); pollTranscript(ep) }
+             "failed" -> transcripts[ep.id] = TxState.Failed(st.error ?: "Transcription failed", fromServer = true)
+             else -> transcripts[ep.id] = TxState.Offer()
+diff --git a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+index 2bc0cb9..60e1dd6 100644
+--- a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
++++ b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+@@ -447,10 +447,15 @@ private fun SyncPanel(vm: AppViewModel, epId: String, isCurrent: Boolean, source
+         Text("Fix the timing", style = MaterialTheme.typography.titleSmall)
+         Text(
+             if (untimed) "This text has no timings. Play the episode and tap Set on the line you are hearing. Set at least two lines, far apart (for example near the start and near the end); the lines between are spread evenly."
+-            else "Play the episode and tap Set on the line you are hearing now. One Set moves everything; two far apart also fix drifting. Changes are saved on this device.",
++            else "Play the episode and tap Set on the line you are hearing now. One Set moves everything; two far apart also fix drifting.",
+             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
+         )
+         if (!isCurrent) Text("Start playing this episode first, so Set knows the position.", style = MaterialTheme.typography.bodySmall, color = LColors.Red)
++        Text(
++            if (vm.timingIsShared(epId, source)) "Saved for everyone on your server, as well as on this phone." else "Saved on this phone only.",
++            style = MaterialTheme.typography.labelSmall, color = LColors.Good,
++        )
++        vm.timingSaveError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = LColors.Red) }
+         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+             for (d in listOf(-5, -1, 1, 5)) {
+                 Chip((if (d > 0) "+" else "") + "$d s", false) { vm.saveTxEdit(epId, source, edit.copy(offset = edit.offset + d)) }
+diff --git a/backend/migrations/0004_transcript_timing.sql b/backend/migrations/0004_transcript_timing.sql
+new file mode 100644
+index 0000000..540dc5d
+--- /dev/null
++++ b/backend/migrations/0004_transcript_timing.sql
+@@ -0,0 +1,9 @@
++-- 0004: a shared timing fix for a transcript ("line 12 is really at 3:05"), saved by any member
++-- and seen by everyone on the server. Additive only: a new table, nothing existing is changed.
++CREATE TABLE IF NOT EXISTS transcript_edits (
++  ep_id       TEXT PRIMARY KEY,
++  offset_sec  INTEGER NOT NULL DEFAULT 0,
++  anchors     TEXT NOT NULL DEFAULT '[]',
++  updated_by  TEXT,
++  updated_at  INTEGER NOT NULL
++);
+diff --git a/backend/package.json b/backend/package.json
+index bea5463..dcf75aa 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "leestn-api",
+-  "version": "1.5.3",
++  "version": "1.5.4",
+   "private": true,
+   "type": "module",
+   "scripts": {
+@@ -10,7 +10,7 @@
+     "db:migrate:local": "wrangler d1 migrations apply leestn --local",
+     "db:migrate:remote": "wrangler d1 migrations apply leestn --remote",
+     "tail": "wrangler tail",
+-    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts"
++    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts && bun run test/timing.ts"
+   },
+   "devDependencies": {
+     "@cloudflare/workers-types": "^4.20250214.0",
+diff --git a/backend/src/index.ts b/backend/src/index.ts
+index e13e1ba..baaebbf 100644
+--- a/backend/src/index.ts
++++ b/backend/src/index.ts
+@@ -1,6 +1,6 @@
+ import type { ChunkJob, Env } from "./types";
+ import { HttpError, cors, json } from "./util";
+-import { consume, getTranscript, getUsage, requestTranscript } from "./transcripts";
++import { consume, getTranscript, getUsage, putTiming, requestTranscript } from "./transcripts";
+ import {
+   createUser, deleteAvatar, deleteMe, feed, follow, getAvatar, me, patchMe, profile, pull, push, putAvatar, searchUsers, showRatings, wrapped,
+ } from "./users";
+@@ -11,11 +11,12 @@ async function route(req: Request, env: Env): Promise<Response> {
+   const m = req.method;
+   let r: RegExpMatchArray | null;
+ 
+-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.3" });
++  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.4" });
+ 
+   // Transcripts (invite key or account token)
+   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
+   if (p === "/v1/transcripts" && m === "POST") return requestTranscript(env, req);
++  if ((r = p.match(/^\/v1\/transcripts\/(.+)\/timing$/)) && m === "PUT") return putTiming(env, req, decodeURIComponent(r[1]));
+   if ((r = p.match(/^\/v1\/transcripts\/(.+)$/)) && m === "GET") return getTranscript(env, req, decodeURIComponent(r[1]));
+ 
+   // Accounts
+diff --git a/backend/src/transcripts.ts b/backend/src/transcripts.ts
+index 6779d5a..726e9dc 100644
+--- a/backend/src/transcripts.ts
++++ b/backend/src/transcripts.ts
+@@ -17,16 +17,56 @@ interface Row {
+   lines: string | null;
+ }
+ 
+-function view(row: Row | null) {
++type Timing = { offset: number; anchors: [number, number][] };
++
++function view(row: Row | null, timing?: Timing | null) {
+   if (!row) return { status: "none", progress: 0, lines: [] };
+   return {
+     status: row.status,
+     progress: row.progress,
+     error: row.error ?? undefined,
+     lines: row.status === "ready" && row.lines ? JSON.parse(row.lines) : [],
++    ...(timing ? { timing } : {}),
+   };
+ }
+ 
++/** The shared timing fix for this transcript, if someone saved one. */
++async function timingOf(env: Env, epId: string): Promise<Timing | null> {
++  try {
++    const r = await env.DB.prepare("SELECT offset_sec, anchors FROM transcript_edits WHERE ep_id = ?").bind(epId).first<{ offset_sec: number; anchors: string }>();
++    if (!r) return null;
++    return { offset: r.offset_sec, anchors: JSON.parse(r.anchors) };
++  } catch {
++    return null; // e.g. migration 0004 not applied yet: reading transcripts must keep working
++  }
++}
++
++/** PUT /v1/transcripts/:epId/timing — save (or clear) the shared timing fix. Any member may do it. */
++export async function putTiming(env: Env, req: Request, epId: string): Promise<Response> {
++  const { user } = await member(env, req);
++  const row = await env.DB.prepare("SELECT status FROM transcripts WHERE ep_id = ?").bind(epId).first<{ status: string }>();
++  if (!row || row.status !== "ready") throw new HttpError(404, "There is no finished transcript on the server for this episode");
++  const b = await body(req);
++  const offset = int(b.offset, 0, -3600, 3600);
++  const list = Array.isArray(b.anchors) ? (b.anchors as unknown[]).slice(0, 300) : [];
++  const anchors: [number, number][] = [];
++  for (const a of list) {
++    if (!Array.isArray(a) || a.length !== 2) continue;
++    const i = Math.trunc(Number(a[0]));
++    const sec = Math.trunc(Number(a[1]));
++    if (Number.isFinite(i) && Number.isFinite(sec) && i >= 0 && i < 200_000 && sec >= 0 && sec < 86_400) anchors.push([i, sec]);
++  }
++  if (offset === 0 && anchors.length === 0) {
++    await env.DB.prepare("DELETE FROM transcript_edits WHERE ep_id = ?").bind(epId).run();
++    return json(env, { ok: true, timing: null });
++  }
++  await env.DB.prepare(
++    `INSERT INTO transcript_edits (ep_id, offset_sec, anchors, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
++     ON CONFLICT(ep_id) DO UPDATE SET offset_sec=excluded.offset_sec, anchors=excluded.anchors, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
++  ).bind(epId, offset, JSON.stringify(anchors), user?.id ?? "key", Date.now()).run();
++  return json(env, { ok: true, timing: { offset, anchors } });
++}
++
+ /** Refuse anything that isn't a public https URL, so the Worker can't be pointed at internal addresses. */
+ function checkAudioUrl(raw: string): URL {
+   let u: URL;
+@@ -231,7 +271,7 @@ async function probe(url: string): Promise<{ size: number; type: string; head: U
+ export async function getTranscript(env: Env, req: Request, epId: string): Promise<Response> {
+   await member(env, req);
+   const row = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
+-  return json(env, view(row));
++  return json(env, view(row, row?.status === "ready" ? await timingOf(env, epId) : null));
+ }
+ 
+ export async function usageNow(env: Env) {
+@@ -268,7 +308,7 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
+   const existing = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
+   // A failed job can always be asked again. A finished one only when the caller explicitly asks to redo it (text came out wrong).
+   const redo = b.force === true && existing?.status === "ready";
+-  if (existing && existing.status !== "failed" && !redo) return json(env, view(existing));
++  if (existing && existing.status !== "failed" && !redo) return json(env, view(existing, existing.status === "ready" ? await timingOf(env, epId) : null));
+ 
+   // Daily cap on new jobs, across all users, to keep Whisper spend predictable.
+   const cap = int(env.MAX_TRANSCRIPTS_PER_DAY, 40, 0);
+@@ -324,6 +364,12 @@ export async function requestTranscript(env: Env, req: Request): Promise<Respons
+   if (lang) for (const m of messages) m.lang = lang;
+   const total = messages.length;
+   const now = Date.now();
++  // a new transcription has different lines, so an old shared timing fix no longer fits
++  try {
++    await env.DB.prepare("DELETE FROM transcript_edits WHERE ep_id = ?").bind(epId).run();
++  } catch {
++    /* migration 0004 not applied yet: nothing to clear */
++  }
+   await env.DB.batch([
+     env.DB.prepare("DELETE FROM transcript_chunks WHERE ep_id = ?").bind(epId),
+     env.DB.prepare(
+diff --git a/backend/test/timing.ts b/backend/test/timing.ts
+new file mode 100644
+index 0000000..b619cd7
+--- /dev/null
++++ b/backend/test/timing.ts
+@@ -0,0 +1,58 @@
++// Shared timing fixes: migration 0004 on top of the current schema, the PUT/GET API, and reset on regeneration.
++import { call, drain, files, finish, makeDb, makeEnv, ok } from "./harness";
++
++// --- upgrade from the current production schema (0001..0003) with an existing finished transcript ---
++const { db, DB } = makeDb("0003_usage_meter.sql");
++const now = Date.now();
++db.exec(`INSERT INTO transcripts (ep_id,status,progress,error,chunks_total,audio_url,duration_sec,lines,requested_by,created_at,updated_at,audio_sec)
++         VALUES ('old1','ready',1,NULL,3,'https://cdn.example.com/x.mp3',1800,'[{"t":0,"text":"a"},{"t":60,"text":"b"}]','u1',${now},${now},1800)`);
++const env = makeEnv(DB);
++env.WHISPER_DAILY_MINUTES = "100000"; env.MAX_PER_USER_PER_DAY = "50"; env.MAX_TRANSCRIPTS_PER_DAY = "50";
++const A = (await call(env, "POST", "/v1/users", "secret", { handle: "ann", name: "A" })).j.token;
++const B = (await call(env, "POST", "/v1/users", "secret", { handle: "bob", name: "B" })).j.token;
++
++// the new Worker must keep serving transcripts even before the migration has run
++let r = await call(env, "GET", "/v1/transcripts/old1", A);
++ok("reading works before migration 0004 is applied", r.s === 200 && r.j.status === "ready" && r.j.lines.length === 2 && r.j.timing === undefined, r);
++
++db.exec(await Bun.file(import.meta.dir + "/../migrations/0004_transcript_timing.sql").text());
++ok("old transcript survives the migration", (db.prepare("SELECT COUNT(*) n FROM transcripts WHERE ep_id='old1'").get() as any).n === 1);
++db.exec(await Bun.file(import.meta.dir + "/../migrations/0004_transcript_timing.sql").text());
++ok("0004 can be run twice without error (idempotent)", true);
++
++r = await call(env, "GET", "/v1/transcripts/old1", A);
++ok("no fix saved yet: no timing field", r.s === 200 && r.j.timing === undefined, r);
++
++// --- save a fix as Ann, see it as Bob ---
++ok("saving needs an account", (await call(env, "PUT", "/v1/transcripts/old1/timing", "", { offset: 3 })).s === 401);
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 4, anchors: [[0, 2], [1, 70]] });
++ok("Ann saves a fix", r.s === 200 && r.j.timing.offset === 4, r);
++r = await call(env, "GET", "/v1/transcripts/old1", B);
++ok("Bob sees Ann's fix", r.j.timing && r.j.timing.offset === 4 && r.j.timing.anchors.length === 2 && r.j.timing.anchors[1][1] === 70, r.j);
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", B, { offset: -2, anchors: [[5, 9]] });
++r = await call(env, "GET", "/v1/transcripts/old1", A);
++ok("last save wins", r.j.timing.offset === -2 && r.j.timing.anchors.length === 1, r.j);
++r = await call(env, "POST", "/v1/transcripts", A, { epId: "old1", audioUrl: "https://cdn.example.com/x.mp3", durationSec: 1800 });
++ok("asking for a finished transcript also returns the fix", r.s === 200 && r.j.timing?.offset === -2, r);
++
++// --- validation ---
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 99999, anchors: [["x", 1], [1], [-1, 5], [2, 999999], [3, 30], "nope"] });
++ok("junk is clamped or dropped", r.s === 200 && r.j.timing.offset === 3600 && JSON.stringify(r.j.timing.anchors) === "[[3,30]]", r);
++ok("no transcript, no fix", (await call(env, "PUT", "/v1/transcripts/nothing/timing", A, { offset: 1 })).s === 404);
++
++// --- clearing ---
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [] });
++ok("saving an empty fix clears it", r.s === 200 && r.j.timing === null, r);
++r = await call(env, "GET", "/v1/transcripts/old1", B);
++ok("and it is gone for everyone", r.j.timing === undefined, r.j);
++
++// --- a new transcription drops the old fix, because the lines are different ---
++files.set("n.mp3", { bytes: new Uint8Array(70_000).fill(1), type: "audio/mpeg" });
++await call(env, "POST", "/v1/transcripts", A, { epId: "n", audioUrl: "https://cdn.example.com/n.mp3", durationSec: 30 });
++await drain(env);
++await call(env, "PUT", "/v1/transcripts/n/timing", A, { offset: 7, anchors: [[0, 3]] });
++r = await call(env, "GET", "/v1/transcripts/n", A);
++ok("fix saved on a generated transcript", r.j.timing?.offset === 7, r.j);
++await call(env, "POST", "/v1/transcripts", A, { epId: "n", audioUrl: "https://cdn.example.com/n.mp3", durationSec: 30, force: true });
++ok("redo clears the old fix", (db.prepare("SELECT COUNT(*) n FROM transcript_edits WHERE ep_id='n'").get() as any).n === 0);
++finish();
+diff --git a/release/RELEASE-1.5.3.md b/release/RELEASE-1.5.3.md
+deleted file mode 100644
+index 28da8c0..0000000
+--- a/release/RELEASE-1.5.3.md
++++ /dev/null
+@@ -1,44 +0,0 @@
+-# Release 1.5.3: fix transcript timing by hand, hide timings, paste your own text
+-
+-**What changes for people** (on an episode's transcript, a row of buttons appears under the title)
+-
+-1. **Sync** (manual timing fix, saved on your phone). Play the episode, tap **Set** on the line you are hearing now. One Set moves the whole transcript; two Sets far apart (say near the start and near the end) also fix drift, and the lines in between are spread evenly. **−5 s, −1 s, +1 s, +5 s** nudge everything, **Reset** undoes it. Every change is saved immediately, per episode.
+-2. **Timings toggle.** Off shows the transcript as plain text with no times and no follow-along. On brings the timings back.
+-3. **Paste text.** Paste a transcript from anywhere. Plain text works (blank lines or new lines make paragraphs). Lines that start with a time (`0:12 text`, `[01:02:03] text`) or WebVTT/SRT files keep their timings. Pasted text without timings can be given timings with Sync (Set at least two lines). When an episode has both an original and a pasted transcript, **Original / Pasted** buttons switch between them. Pasted text and timing fixes are stored only on your device.
+-4. **Better automatic timing for MP3 (server).** The server used the duration from the podcast's feed to place each part, and feeds are often wrong (ads, re-encodes), so timestamps drifted. It now reads the MP3's own header: the exact frame count from a Xing/Info header (and the seek table for variable bitrate), or the constant bitrate. The feed's duration is only a fallback.
+-
+-Already-generated transcripts keep their old (wrong) timings. For those, either press **Redo** (uses free Whisper time) or fix them with Sync.
+-
+-| Question | Answer |
+-| --- | --- |
+-| Database migration needed? | **No.** No tables or columns change. Do not run a migration. (If you never deployed 1.5.0, the script will still show `0003_usage_meter.sql` and apply it after a backup and your `YES`.) |
+-| Worker deployment needed? | **Yes**, for the better MP3 timing only. Sync, Timings and Paste work without it. |
+-| Android release needed? | **Yes.** |
+-| New secrets, bindings, dependencies? | None. `wrangler.toml` untouched. |
+-
+-## Steps
+-
+-Patches in the zip: `leestn-v1.5.3.patch` (if you applied 1.5.2) or `leestn-v1.5.3-from-1.0.patch` (everything). Check, then apply (files on your PC only):
+-
+-    git apply --check <patch name>
+-    git apply <patch name>
+-
+-`git status` must not list `backend/wrangler.toml`. Then:
+-
+-    powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
+-
+-It runs the tests, lists waiting migrations (expect none), asks `YES` for a backup, asks `YES` to deploy the existing `leestn-api`, and checks `/health` shows `1.5.3`.
+-
+-App: `git add -A`, commit, push, `git tag v1.5.3`, `git push origin v1.5.3`; then Settings → About → Check for updates.
+-
+-## Rollback
+-
+-Code only: `npx wrangler rollback` in `backend`. No data changes in this release. On the phone, your pasted text and timing fixes live in the app's private storage; they survive updates and are removed only if you erase the app's data.
+-
+-## Risks
+-
+-- **The Android code has never been compiled by me.** Last time a build error slipped in; this release adds a lot of new screen code, so a build error is possible. Paste it and I'll fix it right away.
+-- The timing logic (spreading lines between your Set points, pasted-text parsing) is tested by compiling it with the real Kotlin compiler and running it, but the buttons and layout have not been run on a device.
+-- The new MP3 timing is tested with synthetic files (Xing, Info and constant-bitrate headers). Variable-bitrate files without a Xing header are still estimated as constant bitrate and can drift; Sync fixes those.
+-- Transcripts with ads inserted dynamically can differ between downloads, so the same episode can have a different offset at different times. Sync is saved per device.
+-- Syncing and pasting are not shared with friends or the server; they are only on your phone.
+diff --git a/release/RELEASE-1.5.4.md b/release/RELEASE-1.5.4.md
+new file mode 100644
+index 0000000..e795fb9
+--- /dev/null
++++ b/release/RELEASE-1.5.4.md
+@@ -0,0 +1,58 @@
++# Release 1.5.4: fix transcript timing by hand (shared with everyone), hide timings, paste your own text
++
++**What changes for people** (on an episode's transcript, a row of buttons appears under the title)
++
++1. **Sync: fix the timing by hand.** Play the episode, tap **Set** on the line you are hearing now. One Set moves the whole transcript; two Sets far apart (say near the start and near the end) also fix drift, and the lines in between are spread evenly. **−5 s, −1 s, +1 s, +5 s** nudge everything, **Reset** undoes it.
++   - **For a transcript the server generated, the fix is saved on the server and everyone on your server sees it** (the last person to save wins). It is also kept on your phone. If the server can't be reached, the app says "Saved on this phone, but not on the server yet".
++   - For a transcript that came from the podcast publisher, or for pasted text, the fix is saved on your phone only.
++   - Pressing **Redo** (new transcription) clears the shared fix, because the lines are different.
++2. **Timings toggle.** Off shows the transcript as plain text with no times and no follow-along. On brings the timings back.
++3. **Paste text.** Paste a transcript from anywhere. Plain text works (blank lines or new lines make paragraphs). Lines that start with a time (`0:12 text`, `[01:02:03] text`) or WebVTT/SRT files keep their timings. Pasted text without timings can be given timings with Sync (Set at least two lines). When an episode has both an original and a pasted transcript, **Original / Pasted** buttons switch between them. Pasted text is stored only on your phone.
++4. **Better automatic timing for MP3 (server).** The server used the duration from the podcast's feed to place each part, and feeds are often wrong, so timestamps drifted. It now reads the MP3's own header: the exact frame count from a Xing/Info header (and the seek table for variable bitrate), or the constant bitrate. The feed's duration is only a fallback.
++
++Already-generated transcripts keep their old timings. For those, either press **Redo** (uses free Whisper time) or fix them with Sync.
++
++| Question | Answer |
++| --- | --- |
++| Database migration needed? | **Yes, one, additive:** `0004_transcript_timing.sql` creates a new table `transcript_edits` (one row per shared timing fix). Nothing existing is changed, dropped or rewritten. (If you never deployed 1.5.0, the script will also list `0003_usage_meter.sql`; it is applied first.) |
++| Worker deployment needed? | **Yes.** Shared timing, better MP3 timing. |
++| Android release needed? | **Yes.** |
++| New secrets, bindings, dependencies? | None. `wrangler.toml` untouched. |
++
++**Order matters: the script applies the migration first, then deploys.** (The new Worker also keeps working if the table is missing: transcripts still load and generate, but timing fixes can't be saved until the migration is applied.)
++
++## Steps
++
++Pick the patch that matches what you have applied so far (all three bring you to 1.5.4):
++
++- `leestn-v1.5.4.patch`: you applied 1.5.2 (the last one that built for you).
++- `leestn-v1.5.4-from-1.5.3.patch`: you already applied the 1.5.3 patch I sent earlier.
++- `leestn-v1.5.4-from-1.0.patch`: you applied none of the 1.5.x patches.
++
++Check first (changes nothing), then apply (files on your PC only):
++
++    git apply --check <patch name>
++    git apply <patch name>
++
++`git status` must not list `backend/wrangler.toml`. Then:
++
++    powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
++
++The script: checks `wrangler.toml` points at the real Worker `leestn-api`, database `leestn` and queue `leestn-transcribe`; runs the tests on your PC; **lists waiting migrations (read-only; expect `0004_transcript_timing.sql`)**; asks `YES`, then saves a full backup of the live database to `backups\` and notes the Time Travel restore point; asks `YES`, then applies the migration to the existing `leestn` database; does a dry run of the Worker; asks `YES`, then deploys the existing `leestn-api`; checks `/health` shows `1.5.4`.
++
++App: `git add -A`, commit, push, `git tag v1.5.4`, `git push origin v1.5.4`; then Settings → About → Check for updates.
++
++## Rollback
++
++- **Migration applied, deploy failed:** safe. The old Worker ignores the new table. Run the script again; applied migrations never run twice.
++- **New Worker misbehaves:** `npx wrangler rollback` in `backend` (code only). The new table can stay; the old code doesn't use it.
++- **Data damaged (very unlikely):** don't improvise. Keep `backups\leestn-*.sql` and the `.timetravel.txt` beside it and ask me. D1 Time Travel can restore to before the migration, but it also discards everything written after that point.
++- On the phone, pasted text and local timing fixes live in the app's private storage and survive updates.
++
++## Risks
++
++- **The Android code has never been compiled by me.** Last time a build error slipped in; this release adds a lot of new screen code, so a build error is possible. Paste it and I'll fix it right away.
++- The timing logic (spreading lines between your Set points, pasted-text parsing) and the server API are tested (the logic by compiling it with the real Kotlin compiler; the API with a copy of your current schema plus existing data), but the buttons and layout have not been run on a device.
++- **Anyone on your server can change the shared timing** of a transcript, and the last save wins. There is no history or undo beyond Reset.
++- Variable-bitrate MP3s without a Xing header are still estimated as constant bitrate and can drift; Sync fixes those.
++- Episodes with dynamically inserted ads can differ between downloads, so a fix that is right for one download may be off for another.
+diff --git a/release/release-backend.ps1 b/release/release-backend.ps1
+index 1f177b7..f845c08 100644
+--- a/release/release-backend.ps1
++++ b/release/release-backend.ps1
+@@ -157,4 +157,4 @@ try {
+ finally { Pop-Location }
+ 
+ Say 'Done'
+-Info 'If anything looks wrong, see release\RELEASE-1.5.3.md, section "If something goes wrong".'
++Info 'If anything looks wrong, see release\RELEASE-1.5.4.md, section "If something goes wrong".'
