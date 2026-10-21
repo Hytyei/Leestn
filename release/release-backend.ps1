@@ -1,4 +1,4 @@
-<#
+﻿<#
 Leestn backend release script.
 
 What it does, in order. It stops at the first error, and at every "GATE" it waits for you to type YES.
@@ -64,7 +64,7 @@ function Pick([string]$pattern) { $m = [regex]::Match($t, $pattern, 'Multiline')
 $worker = Pick '^\s*name\s*=\s*"([^"]+)"'
 $dbName = Pick '^\s*database_name\s*=\s*"([^"]+)"'
 $dbId   = Pick '^\s*database_id\s*=\s*"([^"]+)"'
-$queues = [regex]::Matches($t, '^\s*queue\s*=\s*"([^"]+)"', 'Multiline') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+$queues = @([regex]::Matches($t, '^\s*queue\s*=\s*"([^"]+)"', 'Multiline') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
 if ($worker -ne $ExpectedWorker) { throw "wrangler.toml says the Worker is '$worker', expected '$ExpectedWorker'. Stopping." }
 if ($dbName -ne $ExpectedDbName) { throw "wrangler.toml says the database is '$dbName', expected '$ExpectedDbName'. Stopping." }
 if ($dbId   -ne $ExpectedDbId)   { throw "wrangler.toml has database id '$dbId', expected '$ExpectedDbId'. Stopping." }
@@ -158,3 +158,4 @@ finally { Pop-Location }
 
 Say 'Done'
 Info 'If anything looks wrong, see release\RELEASE-1.5.5.md, section "If something goes wrong".'
+
