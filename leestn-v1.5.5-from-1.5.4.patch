@@ -1,0 +1,457 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 69b1b3c..137d3f8 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         applicationId = "app.leestn"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 19
+-        versionName = "1.5.4"
++        versionCode = 20
++        versionName = "1.5.5"
+     }
+ 
+     signingConfigs {
+diff --git a/app/src/main/java/app/leestn/data/Backend.kt b/app/src/main/java/app/leestn/data/Backend.kt
+index f5feec0..2f19476 100644
+--- a/app/src/main/java/app/leestn/data/Backend.kt
++++ b/app/src/main/java/app/leestn/data/Backend.kt
+@@ -31,7 +31,11 @@ object Backend {
+             t.optJSONArray("anchors")?.let { arr ->
+                 for (i in 0 until arr.length()) { val p = arr.optJSONArray(i) ?: continue; a[p.optInt(0)] = p.optInt(1) }
+             }
+-            TxEdit(t.optInt("offset"), a)
++            val sh = ArrayList<Shift>()
++            t.optJSONArray("shifts")?.let { arr ->
++                for (i in 0 until arr.length()) { val p = arr.optJSONArray(i) ?: continue; sh.add(Shift(p.optInt(0), p.optInt(1, -1), p.optInt(2))) }
++            }
++            TxEdit(t.optInt("offset"), a, sh)
+         }
+         return Tx(j.optString("status", "none"), j.optDouble("progress", 0.0).toFloat(), j.optString("error").ifBlank { null }, lines, timing)
+     }
+@@ -59,7 +63,9 @@ object Backend {
+     fun putTiming(base: String, key: String, epId: String, e: TxEdit) {
+         val anchors = org.json.JSONArray()
+         e.anchors.forEach { (i, sec) -> anchors.put(org.json.JSONArray().put(i).put(sec)) }
+-        val body = JSONObject().put("offset", e.offset).put("anchors", anchors).toString()
++        val shifts = org.json.JSONArray()
++        e.shifts.forEach { shifts.put(org.json.JSONArray().put(it.from).put(it.to).put(it.ms)) }
++        val body = JSONObject().put("offset", e.offset).put("anchors", anchors).put("shifts", shifts).toString()
+         val req = builder("$base/v1/transcripts/${java.net.URLEncoder.encode(epId, "UTF-8")}/timing", key)
+             .put(body.toRequestBody("application/json".toMediaType())).build()
+         Http.client.newCall(req).execute().use { resp ->
+diff --git a/app/src/main/java/app/leestn/data/TxEdit.kt b/app/src/main/java/app/leestn/data/TxEdit.kt
+index 4b41217..80e28ee 100644
+--- a/app/src/main/java/app/leestn/data/TxEdit.kt
++++ b/app/src/main/java/app/leestn/data/TxEdit.kt
+@@ -5,10 +5,22 @@ package app.leestn.data
+  * [offset] moves every line by that many seconds. [anchors] say "line number N is at second S":
+  * the lines in between are spread evenly, so two lines far apart are enough to fix a drifting transcript.
+  */
+-data class TxEdit(val offset: Int = 0, val anchors: Map<Int, Int> = emptyMap()) {
+-    val isEmpty: Boolean get() = offset == 0 && anchors.isEmpty()
++data class TxEdit(val offset: Int = 0, val anchors: Map<Int, Int> = emptyMap(), val shifts: List<Shift> = emptyList()) {
++    val isEmpty: Boolean get() = offset == 0 && anchors.isEmpty() && shifts.isEmpty()
++
++    /** Moves lines [from]..[to] (to = -1 means "to the end") by [ms] milliseconds. Repeated moves of the same range add up. */
++    fun shifted(from: Int, to: Int, ms: Int): TxEdit {
++        if (ms == 0) return this
++        val same = shifts.firstOrNull { it.from == from && it.to == to }
++        val rest = shifts.filter { it !== same }
++        val total = (same?.ms ?: 0) + ms
++        return copy(shifts = if (total == 0) rest else rest + Shift(from, to, total))
++    }
+ }
+ 
++/** A move of lines [from]..[to] (inclusive; -1 = last line) by [ms] milliseconds. Whole transcript = 0..-1. */
++data class Shift(val from: Int, val to: Int, val ms: Int)
++
+ object TxEditing {
+     /** Applies the edit and returns new lines. Lines the edit can't place keep t = -1. */
+     fun apply(lines: List<TxLine>, edit: TxEdit?): List<TxLine> {
+@@ -53,6 +65,11 @@ object TxEditing {
+                 }
+             }
+         }
++        // Moves chosen by the person: the whole transcript, a range, or a single line.
++        for (sh in edit.shifts) {
++            val last = if (sh.to < 0) n - 1 else minOf(sh.to, n - 1)
++            for (i in maxOf(0, sh.from)..last) if (!y[i].isNaN()) y[i] += sh.ms / 1000.0
++        }
+         var floor = 0.0
+         return lines.mapIndexed { i, line ->
+             if (y[i].isNaN()) return@mapIndexed line.copy(t = -1)
+diff --git a/app/src/main/java/app/leestn/data/TxLocal.kt b/app/src/main/java/app/leestn/data/TxLocal.kt
+index 95ae92f..c610823 100644
+--- a/app/src/main/java/app/leestn/data/TxLocal.kt
++++ b/app/src/main/java/app/leestn/data/TxLocal.kt
+@@ -26,7 +26,10 @@ class TxLocal(ctx: Context) {
+             val a = HashMap<Int, Int>()
+             val arr = j.optJSONArray("a") ?: JSONArray()
+             for (i in 0 until arr.length()) { val p = arr.getJSONArray(i); a[p.getInt(0)] = p.getInt(1) }
+-            TxEdit(j.optInt("o"), a)
++            val sh = ArrayList<Shift>()
++            val sa = j.optJSONArray("s") ?: JSONArray()
++            for (i in 0 until sa.length()) { val p = sa.getJSONArray(i); sh.add(Shift(p.getInt(0), p.getInt(1), p.getInt(2))) }
++            TxEdit(j.optInt("o"), a, sh)
+         } catch (e: Exception) { TxEdit() }
+     }
+ 
+@@ -35,7 +38,9 @@ class TxLocal(ctx: Context) {
+         if (e.isEmpty) { prefs.edit().remove(k).apply(); return }
+         val arr = JSONArray()
+         e.anchors.forEach { (i, s) -> arr.put(JSONArray().put(i).put(s)) }
+-        prefs.edit().putString(k, JSONObject().put("o", e.offset).put("a", arr).toString()).apply()
++        val sa = JSONArray()
++        e.shifts.forEach { sa.put(JSONArray().put(it.from).put(it.to).put(it.ms)) }
++        prefs.edit().putString(k, JSONObject().put("o", e.offset).put("a", arr).put("s", sa).toString()).apply()
+     }
+ 
+     private fun pasteFile(epId: String) = File(dir, key(epId) + ".txt")
+diff --git a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+index 60e1dd6..de8765e 100644
+--- a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
++++ b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+@@ -78,6 +78,8 @@ import app.leestn.data.Episode
+ import app.leestn.data.Kind
+ import app.leestn.data.ListItem
+ import app.leestn.state.AppViewModel
++import androidx.compose.ui.text.input.KeyboardType
++import androidx.compose.foundation.text.KeyboardOptions
+ import app.leestn.data.TxEditing
+ import app.leestn.data.TxEdit
+ import androidx.compose.foundation.layout.heightIn
+@@ -165,6 +167,9 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+     val lines = if (vm.showTimings) fixedLines else remember(fixedLines) { fixedLines.map { it.copy(t = -1) } }
+     val synced = vm.showTimings && lines.any { it.t >= 0 }
+     var syncMode by rememberSaveable(epId) { mutableStateOf(false) }
++    var selLine by rememberSaveable(epId) { mutableStateOf(-1) } // line chosen for moving, -1 = whole transcript
++    var tailScope by rememberSaveable(epId) { mutableStateOf(false) } // move the chosen line and everything after it
++    var amount by rememberSaveable(epId) { mutableStateOf("1") } // seconds to move by
+     var pasteDialog by remember { mutableStateOf(false) }
+     val activeIdx by remember(epId, lines) { derivedStateOf { if (synced && vm.playingId == epId) lines.indexOfLast { it.t >= 0 && it.t <= vm.t } else -1 } }
+     var query by rememberSaveable(epId) { mutableStateOf("") }
+@@ -311,8 +316,8 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                     if (synced && !syncMode) Chip("Follow", follow) { follow = !follow }
+                 }
+                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-                    if (lines.isNotEmpty()) Chip("Timings", vm.showTimings) { vm.changeShowTimings(!vm.showTimings); if (!vm.showTimings) syncMode = false }
+-                    if (lines.isNotEmpty() && vm.showTimings) Chip("Sync", syncMode) { syncMode = !syncMode }
++                    if (lines.isNotEmpty()) Chip("Timings", vm.showTimings) { vm.changeShowTimings(!vm.showTimings); if (!vm.showTimings) { syncMode = false; selLine = -1 } }
++                    if (lines.isNotEmpty() && vm.showTimings) Chip("Sync", syncMode) { syncMode = !syncMode; if (!syncMode) selLine = -1 }
+                     Chip(if (pastedText != null) "Edit pasted text" else "Paste text", false) { pasteDialog = true }
+                     if (pastedText != null && tx is TxState.Ready) {
+                         Chip("Original", !useCustom) { vm.chooseTxSource(epId, "orig") }
+@@ -322,6 +327,8 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                 if (syncMode && vm.showTimings && lines.isNotEmpty()) SyncPanel(
+                     vm = vm, epId = epId, isCurrent = isCurrent, source = txSourceKey, edit = edit ?: TxEdit(),
+                     untimed = baseLines.none { it.t >= 0 }, anchorCount = (edit ?: TxEdit()).anchors.size,
++                    selLine = selLine, tailScope = tailScope, onTailScope = { tailScope = it }, onClearSel = { selLine = -1 },
++                    amount = amount, onAmount = { amount = it },
+                 )
+                 val searchField: @Composable () -> Unit = {
+                     OutlinedTextField(
+@@ -372,15 +379,19 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                 if (hit) {
+                     val active = i == activeIdx
+                     val past = activeIdx >= 0 && i < activeIdx
+-                    val bg by animateColorAsState(if (active) LColors.Surface2 else Color.Transparent, tween(Motion.Normal), label = "txBg")
+-                    val bar by animateColorAsState(if (active) LColors.Red else Color.Transparent, tween(Motion.Normal), label = "txBar")
++                    val chosen = syncMode && vm.showTimings && i == selLine
++                    val bg by animateColorAsState(if (active || chosen) LColors.Surface2 else Color.Transparent, tween(Motion.Normal), label = "txBg")
++                    val bar by animateColorAsState(if (chosen) LColors.Side else if (active) LColors.Red else Color.Transparent, tween(Motion.Normal), label = "txBar")
+                     val a by animateFloatAsState(if (active) 1f else if (past) 0.45f else 0.85f, tween(Motion.Normal), label = "txAlpha")
+                     Row(
+                         Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(IntrinsicSize.Min)
+                             .alpha(a)
+                             .clip(RoundedCornerShape(12.dp))
+                             .background(bg)
+-                            .clickable(enabled = line.t >= 0) { if (isCurrent) { vm.seekTo(line.t.toFloat()); if (!vm.playing) vm.togglePlay() } else vm.play(epId, line.t) },
++                            .clickable(enabled = line.t >= 0 || (syncMode && vm.showTimings)) {
++                                if (syncMode && vm.showTimings) selLine = if (selLine == i) -1 else i
++                                else if (isCurrent) { vm.seekTo(line.t.toFloat()); if (!vm.playing) vm.togglePlay() } else vm.play(epId, line.t)
++                            },
+                     ) {
+                         Box(Modifier.width(3.dp).fillMaxHeight().background(bar))
+                         if (line.t >= 0) {
+@@ -393,6 +404,11 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                             Text(highlight(line.text, q), style = MaterialTheme.typography.bodyLarge)
+                         }
+                         if (syncMode && vm.showTimings) {
++                            if (line.t >= 0) Box(
++                                Modifier.padding(end = 6.dp, top = 8.dp).align(Alignment.Top).clip(RoundedCornerShape(99.dp)).background(LColors.Surface3)
++                                    .pressable { if (isCurrent) { vm.seekTo(line.t.toFloat()); if (!vm.playing) vm.togglePlay() } else vm.play(epId, line.t) }
++                                    .padding(horizontal = 10.dp, vertical = 6.dp),
++                            ) { Text("Play", style = MaterialTheme.typography.labelMedium, color = LColors.Text2) }
+                             val pinned = edit?.anchors?.containsKey(i) == true
+                             Box(
+                                 Modifier.padding(end = 8.dp, top = 8.dp).align(Alignment.Top).clip(RoundedCornerShape(99.dp))
+@@ -439,7 +455,21 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+ 
+ /** Controls shown while fixing timings by hand. Every change is saved on this device straight away. */
+ @Composable
+-private fun SyncPanel(vm: AppViewModel, epId: String, isCurrent: Boolean, source: String, edit: TxEdit, untimed: Boolean, anchorCount: Int) {
++private fun SyncPanel(
++    vm: AppViewModel, epId: String, isCurrent: Boolean, source: String, edit: TxEdit, untimed: Boolean, anchorCount: Int,
++    selLine: Int, tailScope: Boolean, onTailScope: (Boolean) -> Unit, onClearSel: () -> Unit, amount: String, onAmount: (String) -> Unit,
++) {
++    val seconds = amount.replace(',', '.').toDoubleOrNull()
++    val ms = if (seconds != null && seconds > 0) Math.min(3_600_000.0, Math.round(seconds * 1000.0).toDouble()).toInt() else 0
++    fun move(sign: Int) {
++        if (ms == 0) return
++        val (from, to) = when {
++            selLine < 0 -> 0 to -1
++            tailScope -> selLine to -1
++            else -> selLine to selLine
++        }
++        vm.saveTxEdit(epId, source, edit.shifted(from, to, sign * ms))
++    }
+     Column(
+         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(LColors.Surface).padding(14.dp),
+         verticalArrangement = Arrangement.spacedBy(10.dp),
+@@ -447,25 +477,49 @@ private fun SyncPanel(vm: AppViewModel, epId: String, isCurrent: Boolean, source
+         Text("Fix the timing", style = MaterialTheme.typography.titleSmall)
+         Text(
+             if (untimed) "This text has no timings. Play the episode and tap Set on the line you are hearing. Set at least two lines, far apart (for example near the start and near the end); the lines between are spread evenly."
+-            else "Play the episode and tap Set on the line you are hearing now. One Set moves everything; two far apart also fix drifting.",
++            else "Move by an amount you choose, or play the episode and tap Set on the line you are hearing now. Two Sets far apart also fix drifting.",
+             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
+         )
+         if (!isCurrent) Text("Start playing this episode first, so Set knows the position.", style = MaterialTheme.typography.bodySmall, color = LColors.Red)
++
++        // move by any amount, earlier or later
++        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
++            OutlinedTextField(
++                value = amount, onValueChange = { onAmount(it.filter { c -> c.isDigit() || c == '.' || c == ',' }.take(7)) },
++                singleLine = true, label = { Text("Seconds") }, isError = ms == 0, modifier = Modifier.width(112.dp),
++                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
++                shape = RoundedCornerShape(12.dp),
++                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
++            )
++            Chip("◀ Earlier", false) { move(-1) }
++            Chip("Later ▶", false) { move(1) }
++        }
++
++        // what the move applies to
++        if (selLine >= 0) {
++            Text("Moving line ${selLine + 1} only. Tap the line again to go back to the whole transcript.", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
++            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                Chip("This line only", !tailScope) { onTailScope(false) }
++                Chip("This line and after", tailScope) { onTailScope(true) }
++                Chip("Whole transcript", false) { onClearSel() }
++            }
++        } else {
++            Text("Moving the whole transcript. Tap a line to move only that line.", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
++        }
++
++        val whole = edit.shifts.filter { it.from == 0 && it.to == -1 }.sumOf { it.ms } / 1000.0
+         Text(
+-            if (vm.timingIsShared(epId, source)) "Saved for everyone on your server, as well as on this phone." else "Saved on this phone only.",
+-            style = MaterialTheme.typography.labelSmall, color = LColors.Good,
++            "Whole transcript moved ${if (whole > 0) "+" else ""}${"%.1f".format(whole)} s · ${edit.shifts.count { !(it.from == 0 && it.to == -1) }} partial moves · $anchorCount line${if (anchorCount == 1) "" else "s"} set",
++            style = MaterialTheme.typography.labelSmall, color = LColors.Text3,
+         )
+-        vm.timingSaveError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = LColors.Red) }
+         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+-            for (d in listOf(-5, -1, 1, 5)) {
+-                Chip((if (d > 0) "+" else "") + "$d s", false) { vm.saveTxEdit(epId, source, edit.copy(offset = edit.offset + d)) }
+-            }
+-            Chip("Reset", false) { vm.saveTxEdit(epId, source, TxEdit()) }
++            Chip("Reset all", false) { vm.saveTxEdit(epId, source, TxEdit()); onClearSel() }
+         }
+         Text(
+-            "Offset ${if (edit.offset > 0) "+" else ""}${edit.offset} s · $anchorCount line${if (anchorCount == 1) "" else "s"} set",
+-            style = MaterialTheme.typography.labelSmall, color = LColors.Text3,
++            if (vm.timingIsShared(epId, source)) "Saved for everyone on your server, as well as on this phone." else "Saved on this phone only.",
++            style = MaterialTheme.typography.labelSmall, color = LColors.Good,
+         )
++        vm.timingSaveError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = LColors.Red) }
+     }
+ }
+ 
+diff --git a/backend/package.json b/backend/package.json
+index dcf75aa..2904716 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "leestn-api",
+-  "version": "1.5.4",
++  "version": "1.5.5",
+   "private": true,
+   "type": "module",
+   "scripts": {
+diff --git a/backend/src/index.ts b/backend/src/index.ts
+index baaebbf..f28656d 100644
+--- a/backend/src/index.ts
++++ b/backend/src/index.ts
+@@ -11,7 +11,7 @@ async function route(req: Request, env: Env): Promise<Response> {
+   const m = req.method;
+   let r: RegExpMatchArray | null;
+ 
+-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.4" });
++  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.5" });
+ 
+   // Transcripts (invite key or account token)
+   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
+diff --git a/backend/src/transcripts.ts b/backend/src/transcripts.ts
+index 726e9dc..dd6168d 100644
+--- a/backend/src/transcripts.ts
++++ b/backend/src/transcripts.ts
+@@ -17,7 +17,7 @@ interface Row {
+   lines: string | null;
+ }
+ 
+-type Timing = { offset: number; anchors: [number, number][] };
++type Timing = { offset: number; anchors: [number, number][]; shifts: [number, number, number][] };
+ 
+ function view(row: Row | null, timing?: Timing | null) {
+   if (!row) return { status: "none", progress: 0, lines: [] };
+@@ -35,7 +35,10 @@ async function timingOf(env: Env, epId: string): Promise<Timing | null> {
+   try {
+     const r = await env.DB.prepare("SELECT offset_sec, anchors FROM transcript_edits WHERE ep_id = ?").bind(epId).first<{ offset_sec: number; anchors: string }>();
+     if (!r) return null;
+-    return { offset: r.offset_sec, anchors: JSON.parse(r.anchors) };
++    // Stored as {"a": anchors, "s": shifts}. Older rows hold a plain array of anchors.
++    const j = JSON.parse(r.anchors);
++    if (Array.isArray(j)) return { offset: r.offset_sec, anchors: j, shifts: [] };
++    return { offset: r.offset_sec, anchors: j.a ?? [], shifts: j.s ?? [] };
+   } catch {
+     return null; // e.g. migration 0004 not applied yet: reading transcripts must keep working
+   }
+@@ -54,17 +57,26 @@ export async function putTiming(env: Env, req: Request, epId: string): Promise<R
+     if (!Array.isArray(a) || a.length !== 2) continue;
+     const i = Math.trunc(Number(a[0]));
+     const sec = Math.trunc(Number(a[1]));
+-    if (Number.isFinite(i) && Number.isFinite(sec) && i >= 0 && i < 200_000 && sec >= 0 && sec < 86_400) anchors.push([i, sec]);
++    if (Number.isFinite(i) && Number.isFinite(sec) && i >= 0 && i < 200_000 && sec > -7200 && sec < 86_400) anchors.push([i, sec]);
+   }
+-  if (offset === 0 && anchors.length === 0) {
++  // shifts: [firstLine, lastLine (-1 = to the end), milliseconds]
++  const shifts: [number, number, number][] = [];
++  for (const a of Array.isArray(b.shifts) ? (b.shifts as unknown[]).slice(0, 300) : []) {
++    if (!Array.isArray(a) || a.length !== 3) continue;
++    const from = Math.trunc(Number(a[0]));
++    const to = Math.trunc(Number(a[1]));
++    const delta = Math.trunc(Number(a[2]));
++    if ([from, to, delta].every(Number.isFinite) && from >= 0 && from < 200_000 && to >= -1 && to < 200_000 && delta !== 0 && Math.abs(delta) <= 3_600_000) shifts.push([from, to, delta]);
++  }
++  if (offset === 0 && anchors.length === 0 && shifts.length === 0) {
+     await env.DB.prepare("DELETE FROM transcript_edits WHERE ep_id = ?").bind(epId).run();
+     return json(env, { ok: true, timing: null });
+   }
+   await env.DB.prepare(
+     `INSERT INTO transcript_edits (ep_id, offset_sec, anchors, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(ep_id) DO UPDATE SET offset_sec=excluded.offset_sec, anchors=excluded.anchors, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+-  ).bind(epId, offset, JSON.stringify(anchors), user?.id ?? "key", Date.now()).run();
+-  return json(env, { ok: true, timing: { offset, anchors } });
++  ).bind(epId, offset, JSON.stringify({ a: anchors, s: shifts }), user?.id ?? "key", Date.now()).run();
++  return json(env, { ok: true, timing: { offset, anchors, shifts } });
+ }
+ 
+ /** Refuse anything that isn't a public https URL, so the Worker can't be pointed at internal addresses. */
+diff --git a/backend/test/timing.ts b/backend/test/timing.ts
+index b619cd7..4d2e73d 100644
+--- a/backend/test/timing.ts
++++ b/backend/test/timing.ts
+@@ -37,9 +37,23 @@ ok("asking for a finished transcript also returns the fix", r.s === 200 && r.j.t
+ 
+ // --- validation ---
+ r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 99999, anchors: [["x", 1], [1], [-1, 5], [2, 999999], [3, 30], "nope"] });
+-ok("junk is clamped or dropped", r.s === 200 && r.j.timing.offset === 3600 && JSON.stringify(r.j.timing.anchors) === "[[3,30]]", r);
++ok("junk is clamped or dropped", r.s === 200 && r.j.timing.offset === 3600 && JSON.stringify(r.j.timing.anchors) === "[[3,30]]" && r.j.timing.shifts.length === 0, r);
+ ok("no transcript, no fix", (await call(env, "PUT", "/v1/transcripts/nothing/timing", A, { offset: 1 })).s === 404);
+ 
++// --- per-line shifts, negative anchor targets, and rows saved by the previous release (plain anchor array) ---
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [[1, -30]], shifts: [[1, 1, 5], [2, -1, -3], [0, 0, 0], [4], ["x", 1, 1], [3, -5, 1]] });
++ok("shifts are saved, junk shifts dropped, a small negative target is allowed", r.s === 200 && JSON.stringify(r.j.timing.shifts) === "[[1,1,5],[2,-1,-3]]" && r.j.timing.anchors[0][1] === -30, r);
++r = await call(env, "GET", "/v1/transcripts/old1", B);
++ok("Bob sees the shifts", r.j.timing?.shifts?.length === 2, r.j);
++db.exec(`UPDATE transcript_edits SET anchors='[[0,2],[1,70]]', offset_sec=4 WHERE ep_id='old1'`);
++r = await call(env, "GET", "/v1/transcripts/old1", B);
++ok("a row written by the previous release still reads", r.j.timing.offset === 4 && r.j.timing.anchors.length === 2 && r.j.timing.shifts.length === 0, r.j);
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [], shifts: [[2, 2, 4]] });
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [], shifts: [[0, -1, 1500], [1, 1, -250], [2, 2, 99_999_999]] });
++ok("shifts are milliseconds; absurd ones are dropped", JSON.stringify(r.j.timing.shifts) === "[[0,-1,1500],[1,1,-250]]", r);
++r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [], shifts: [[2, 2, 4]] });
++ok("only a shift is enough to be saved", r.s === 200 && r.j.timing?.shifts?.length === 1, r);
++
+ // --- clearing ---
+ r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [] });
+ ok("saving an empty fix clears it", r.s === 200 && r.j.timing === null, r);
+diff --git a/release/RELEASE-1.5.4.md b/release/RELEASE-1.5.5.md
+similarity index 71%
+rename from release/RELEASE-1.5.4.md
+rename to release/RELEASE-1.5.5.md
+index e795fb9..f206552 100644
+--- a/release/RELEASE-1.5.4.md
++++ b/release/RELEASE-1.5.5.md
+@@ -1,8 +1,27 @@
+-# Release 1.5.4: fix transcript timing by hand (shared with everyone), hide timings, paste your own text
++# Release 1.5.5: precise timing moves (any amount, whole transcript or one line)
++
++This release builds on 1.5.4 (Sync, Timings toggle, Paste text, shared timing fixes), which is described further down.
++
++**What changes in 1.5.5**
++
++- The ±1 s / ±5 s buttons are gone. Type **any amount in seconds** (decimals work, for example 0.5 or 2.25) and tap **◀ Earlier** or **Later ▶**.
++- **The move applies to the whole transcript by default.** Tap a line (in Sync mode) to choose it; then the move applies to **only that line**, or switch to **This line and after**. Tap the line again, or **Whole transcript**, to go back. Moves add up, and opposite moves cancel. **Reset all** clears everything.
++- A **Play** button on each line (in Sync mode) jumps playback to that line, so you can check it.
++- Moves are saved for everyone on your server for server-generated transcripts, like the Set fixes. Times are shown to the second, so very small moves only show once they add up to a full second.
++
++| Question (1.5.5 only) | Answer |
++| --- | --- |
++| New database migration? | **No.** The moves are stored inside the existing `transcript_edits` table from 1.5.4 (migration `0004_transcript_timing.sql`, which must already be applied; the script applies it if not). |
++| Worker deployment? | **Yes.** An old Worker would drop the new kind of move when saving. |
++| Android release? | **Yes.** |
++
++---
++
++# Release 1.5.4 (included): fix transcript timing by hand (shared with everyone), hide timings, paste your own text
+ 
+ **What changes for people** (on an episode's transcript, a row of buttons appears under the title)
+ 
+-1. **Sync: fix the timing by hand.** Play the episode, tap **Set** on the line you are hearing now. One Set moves the whole transcript; two Sets far apart (say near the start and near the end) also fix drift, and the lines in between are spread evenly. **−5 s, −1 s, +1 s, +5 s** nudge everything, **Reset** undoes it.
++1. **Sync: fix the timing by hand.** Play the episode, tap **Set** on the line you are hearing now. One Set moves the whole transcript; two Sets far apart (say near the start and near the end) also fix drift, and the lines in between are spread evenly. You can also move by a typed amount (see 1.5.5 above). **Reset all** undoes everything.
+    - **For a transcript the server generated, the fix is saved on the server and everyone on your server sees it** (the last person to save wins). It is also kept on your phone. If the server can't be reached, the app says "Saved on this phone, but not on the server yet".
+    - For a transcript that came from the podcast publisher, or for pasted text, the fix is saved on your phone only.
+    - Pressing **Redo** (new transcription) clears the shared fix, because the lines are different.
+@@ -23,11 +42,11 @@ Already-generated transcripts keep their old timings. For those, either press **
+ 
+ ## Steps
+ 
+-Pick the patch that matches what you have applied so far (all three bring you to 1.5.4):
++Pick the patch that matches what you have applied so far (all three bring you to 1.5.5):
+ 
+-- `leestn-v1.5.4.patch`: you applied 1.5.2 (the last one that built for you).
+-- `leestn-v1.5.4-from-1.5.3.patch`: you already applied the 1.5.3 patch I sent earlier.
+-- `leestn-v1.5.4-from-1.0.patch`: you applied none of the 1.5.x patches.
++- `leestn-v1.5.5-from-1.5.4.patch`: you already applied the 1.5.4 patch.
++- `leestn-v1.5.5-from-1.5.2.patch`: you applied 1.5.2 (or the 1.5.3 test patch is not applied).
++- `leestn-v1.5.5-from-1.0.patch`: you applied none of the 1.5.x patches.
+ 
+ Check first (changes nothing), then apply (files on your PC only):
+ 
+@@ -38,9 +57,9 @@ Check first (changes nothing), then apply (files on your PC only):
+ 
+     powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
+ 
+-The script: checks `wrangler.toml` points at the real Worker `leestn-api`, database `leestn` and queue `leestn-transcribe`; runs the tests on your PC; **lists waiting migrations (read-only; expect `0004_transcript_timing.sql`)**; asks `YES`, then saves a full backup of the live database to `backups\` and notes the Time Travel restore point; asks `YES`, then applies the migration to the existing `leestn` database; does a dry run of the Worker; asks `YES`, then deploys the existing `leestn-api`; checks `/health` shows `1.5.4`.
++The script: checks `wrangler.toml` points at the real Worker `leestn-api`, database `leestn` and queue `leestn-transcribe`; runs the tests on your PC; **lists waiting migrations (read-only; expect `0004_transcript_timing.sql`)**; asks `YES`, then saves a full backup of the live database to `backups\` and notes the Time Travel restore point; asks `YES`, then applies the migration to the existing `leestn` database; does a dry run of the Worker; asks `YES`, then deploys the existing `leestn-api`; checks `/health` shows `1.5.5`.
+ 
+-App: `git add -A`, commit, push, `git tag v1.5.4`, `git push origin v1.5.4`; then Settings → About → Check for updates.
++App: `git add -A`, commit, push, `git tag v1.5.5`, `git push origin v1.5.5`; then Settings → About → Check for updates.
+ 
+ ## Rollback
+ 
+diff --git a/release/release-backend.ps1 b/release/release-backend.ps1
+index f845c08..3678d0b 100644
+--- a/release/release-backend.ps1
++++ b/release/release-backend.ps1
+@@ -157,4 +157,4 @@ try {
+ finally { Pop-Location }
+ 
+ Say 'Done'
+-Info 'If anything looks wrong, see release\RELEASE-1.5.4.md, section "If something goes wrong".'
++Info 'If anything looks wrong, see release\RELEASE-1.5.5.md, section "If something goes wrong".'

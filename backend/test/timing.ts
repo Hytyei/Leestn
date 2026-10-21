@@ -37,8 +37,22 @@ ok("asking for a finished transcript also returns the fix", r.s === 200 && r.j.t
 
 // --- validation ---
 r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 99999, anchors: [["x", 1], [1], [-1, 5], [2, 999999], [3, 30], "nope"] });
-ok("junk is clamped or dropped", r.s === 200 && r.j.timing.offset === 3600 && JSON.stringify(r.j.timing.anchors) === "[[3,30]]", r);
+ok("junk is clamped or dropped", r.s === 200 && r.j.timing.offset === 3600 && JSON.stringify(r.j.timing.anchors) === "[[3,30]]" && r.j.timing.shifts.length === 0, r);
 ok("no transcript, no fix", (await call(env, "PUT", "/v1/transcripts/nothing/timing", A, { offset: 1 })).s === 404);
+
+// --- per-line shifts, negative anchor targets, and rows saved by the previous release (plain anchor array) ---
+r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [[1, -30]], shifts: [[1, 1, 5], [2, -1, -3], [0, 0, 0], [4], ["x", 1, 1], [3, -5, 1]] });
+ok("shifts are saved, junk shifts dropped, a small negative target is allowed", r.s === 200 && JSON.stringify(r.j.timing.shifts) === "[[1,1,5],[2,-1,-3]]" && r.j.timing.anchors[0][1] === -30, r);
+r = await call(env, "GET", "/v1/transcripts/old1", B);
+ok("Bob sees the shifts", r.j.timing?.shifts?.length === 2, r.j);
+db.exec(`UPDATE transcript_edits SET anchors='[[0,2],[1,70]]', offset_sec=4 WHERE ep_id='old1'`);
+r = await call(env, "GET", "/v1/transcripts/old1", B);
+ok("a row written by the previous release still reads", r.j.timing.offset === 4 && r.j.timing.anchors.length === 2 && r.j.timing.shifts.length === 0, r.j);
+r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [], shifts: [[2, 2, 4]] });
+r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [], shifts: [[0, -1, 1500], [1, 1, -250], [2, 2, 99_999_999]] });
+ok("shifts are milliseconds; absurd ones are dropped", JSON.stringify(r.j.timing.shifts) === "[[0,-1,1500],[1,1,-250]]", r);
+r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [], shifts: [[2, 2, 4]] });
+ok("only a shift is enough to be saved", r.s === 200 && r.j.timing?.shifts?.length === 1, r);
 
 // --- clearing ---
 r = await call(env, "PUT", "/v1/transcripts/old1/timing", A, { offset: 0, anchors: [] });

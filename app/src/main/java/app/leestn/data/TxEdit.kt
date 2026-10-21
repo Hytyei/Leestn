@@ -5,9 +5,21 @@ package app.leestn.data
  * [offset] moves every line by that many seconds. [anchors] say "line number N is at second S":
  * the lines in between are spread evenly, so two lines far apart are enough to fix a drifting transcript.
  */
-data class TxEdit(val offset: Int = 0, val anchors: Map<Int, Int> = emptyMap()) {
-    val isEmpty: Boolean get() = offset == 0 && anchors.isEmpty()
+data class TxEdit(val offset: Int = 0, val anchors: Map<Int, Int> = emptyMap(), val shifts: List<Shift> = emptyList()) {
+    val isEmpty: Boolean get() = offset == 0 && anchors.isEmpty() && shifts.isEmpty()
+
+    /** Moves lines [from]..[to] (to = -1 means "to the end") by [ms] milliseconds. Repeated moves of the same range add up. */
+    fun shifted(from: Int, to: Int, ms: Int): TxEdit {
+        if (ms == 0) return this
+        val same = shifts.firstOrNull { it.from == from && it.to == to }
+        val rest = shifts.filter { it !== same }
+        val total = (same?.ms ?: 0) + ms
+        return copy(shifts = if (total == 0) rest else rest + Shift(from, to, total))
+    }
 }
+
+/** A move of lines [from]..[to] (inclusive; -1 = last line) by [ms] milliseconds. Whole transcript = 0..-1. */
+data class Shift(val from: Int, val to: Int, val ms: Int)
 
 object TxEditing {
     /** Applies the edit and returns new lines. Lines the edit can't place keep t = -1. */
@@ -52,6 +64,11 @@ object TxEditing {
                     }
                 }
             }
+        }
+        // Moves chosen by the person: the whole transcript, a range, or a single line.
+        for (sh in edit.shifts) {
+            val last = if (sh.to < 0) n - 1 else minOf(sh.to, n - 1)
+            for (i in maxOf(0, sh.from)..last) if (!y[i].isNaN()) y[i] += sh.ms / 1000.0
         }
         var floor = 0.0
         return lines.mapIndexed { i, line ->

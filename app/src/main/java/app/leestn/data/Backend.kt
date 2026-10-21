@@ -31,7 +31,11 @@ object Backend {
             t.optJSONArray("anchors")?.let { arr ->
                 for (i in 0 until arr.length()) { val p = arr.optJSONArray(i) ?: continue; a[p.optInt(0)] = p.optInt(1) }
             }
-            TxEdit(t.optInt("offset"), a)
+            val sh = ArrayList<Shift>()
+            t.optJSONArray("shifts")?.let { arr ->
+                for (i in 0 until arr.length()) { val p = arr.optJSONArray(i) ?: continue; sh.add(Shift(p.optInt(0), p.optInt(1, -1), p.optInt(2))) }
+            }
+            TxEdit(t.optInt("offset"), a, sh)
         }
         return Tx(j.optString("status", "none"), j.optDouble("progress", 0.0).toFloat(), j.optString("error").ifBlank { null }, lines, timing)
     }
@@ -59,7 +63,9 @@ object Backend {
     fun putTiming(base: String, key: String, epId: String, e: TxEdit) {
         val anchors = org.json.JSONArray()
         e.anchors.forEach { (i, sec) -> anchors.put(org.json.JSONArray().put(i).put(sec)) }
-        val body = JSONObject().put("offset", e.offset).put("anchors", anchors).toString()
+        val shifts = org.json.JSONArray()
+        e.shifts.forEach { shifts.put(org.json.JSONArray().put(it.from).put(it.to).put(it.ms)) }
+        val body = JSONObject().put("offset", e.offset).put("anchors", anchors).put("shifts", shifts).toString()
         val req = builder("$base/v1/transcripts/${java.net.URLEncoder.encode(epId, "UTF-8")}/timing", key)
             .put(body.toRequestBody("application/json".toMediaType())).build()
         Http.client.newCall(req).execute().use { resp ->

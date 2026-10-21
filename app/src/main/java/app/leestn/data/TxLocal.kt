@@ -26,7 +26,10 @@ class TxLocal(ctx: Context) {
             val a = HashMap<Int, Int>()
             val arr = j.optJSONArray("a") ?: JSONArray()
             for (i in 0 until arr.length()) { val p = arr.getJSONArray(i); a[p.getInt(0)] = p.getInt(1) }
-            TxEdit(j.optInt("o"), a)
+            val sh = ArrayList<Shift>()
+            val sa = j.optJSONArray("s") ?: JSONArray()
+            for (i in 0 until sa.length()) { val p = sa.getJSONArray(i); sh.add(Shift(p.getInt(0), p.getInt(1), p.getInt(2))) }
+            TxEdit(j.optInt("o"), a, sh)
         } catch (e: Exception) { TxEdit() }
     }
 
@@ -35,7 +38,9 @@ class TxLocal(ctx: Context) {
         if (e.isEmpty) { prefs.edit().remove(k).apply(); return }
         val arr = JSONArray()
         e.anchors.forEach { (i, s) -> arr.put(JSONArray().put(i).put(s)) }
-        prefs.edit().putString(k, JSONObject().put("o", e.offset).put("a", arr).toString()).apply()
+        val sa = JSONArray()
+        e.shifts.forEach { sa.put(JSONArray().put(it.from).put(it.to).put(it.ms)) }
+        prefs.edit().putString(k, JSONObject().put("o", e.offset).put("a", arr).put("s", sa).toString()).apply()
     }
 
     private fun pasteFile(epId: String) = File(dir, key(epId) + ".txt")

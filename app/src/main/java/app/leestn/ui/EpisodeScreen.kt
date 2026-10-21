@@ -78,6 +78,8 @@ import app.leestn.data.Episode
 import app.leestn.data.Kind
 import app.leestn.data.ListItem
 import app.leestn.state.AppViewModel
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import app.leestn.data.TxEditing
 import app.leestn.data.TxEdit
 import androidx.compose.foundation.layout.heightIn
@@ -165,6 +167,9 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
     val lines = if (vm.showTimings) fixedLines else remember(fixedLines) { fixedLines.map { it.copy(t = -1) } }
     val synced = vm.showTimings && lines.any { it.t >= 0 }
     var syncMode by rememberSaveable(epId) { mutableStateOf(false) }
+    var selLine by rememberSaveable(epId) { mutableStateOf(-1) } // line chosen for moving, -1 = whole transcript
+    var tailScope by rememberSaveable(epId) { mutableStateOf(false) } // move the chosen line and everything after it
+    var amount by rememberSaveable(epId) { mutableStateOf("1") } // seconds to move by
     var pasteDialog by remember { mutableStateOf(false) }
     val activeIdx by remember(epId, lines) { derivedStateOf { if (synced && vm.playingId == epId) lines.indexOfLast { it.t >= 0 && it.t <= vm.t } else -1 } }
     var query by rememberSaveable(epId) { mutableStateOf("") }
@@ -311,8 +316,8 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                     if (synced && !syncMode) Chip("Follow", follow) { follow = !follow }
                 }
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (lines.isNotEmpty()) Chip("Timings", vm.showTimings) { vm.changeShowTimings(!vm.showTimings); if (!vm.showTimings) syncMode = false }
-                    if (lines.isNotEmpty() && vm.showTimings) Chip("Sync", syncMode) { syncMode = !syncMode }
+                    if (lines.isNotEmpty()) Chip("Timings", vm.showTimings) { vm.changeShowTimings(!vm.showTimings); if (!vm.showTimings) { syncMode = false; selLine = -1 } }
+                    if (lines.isNotEmpty() && vm.showTimings) Chip("Sync", syncMode) { syncMode = !syncMode; if (!syncMode) selLine = -1 }
                     Chip(if (pastedText != null) "Edit pasted text" else "Paste text", false) { pasteDialog = true }
                     if (pastedText != null && tx is TxState.Ready) {
                         Chip("Original", !useCustom) { vm.chooseTxSource(epId, "orig") }
@@ -322,6 +327,8 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                 if (syncMode && vm.showTimings && lines.isNotEmpty()) SyncPanel(
                     vm = vm, epId = epId, isCurrent = isCurrent, source = txSourceKey, edit = edit ?: TxEdit(),
                     untimed = baseLines.none { it.t >= 0 }, anchorCount = (edit ?: TxEdit()).anchors.size,
+                    selLine = selLine, tailScope = tailScope, onTailScope = { tailScope = it }, onClearSel = { selLine = -1 },
+                    amount = amount, onAmount = { amount = it },
                 )
                 val searchField: @Composable () -> Unit = {
                     OutlinedTextField(
@@ -372,15 +379,19 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                 if (hit) {
                     val active = i == activeIdx
                     val past = activeIdx >= 0 && i < activeIdx
-                    val bg by animateColorAsState(if (active) LColors.Surface2 else Color.Transparent, tween(Motion.Normal), label = "txBg")
-                    val bar by animateColorAsState(if (active) LColors.Red else Color.Transparent, tween(Motion.Normal), label = "txBar")
+                    val chosen = syncMode && vm.showTimings && i == selLine
+                    val bg by animateColorAsState(if (active || chosen) LColors.Surface2 else Color.Transparent, tween(Motion.Normal), label = "txBg")
+                    val bar by animateColorAsState(if (chosen) LColors.Side else if (active) LColors.Red else Color.Transparent, tween(Motion.Normal), label = "txBar")
                     val a by animateFloatAsState(if (active) 1f else if (past) 0.45f else 0.85f, tween(Motion.Normal), label = "txAlpha")
                     Row(
                         Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(IntrinsicSize.Min)
                             .alpha(a)
                             .clip(RoundedCornerShape(12.dp))
                             .background(bg)
-                            .clickable(enabled = line.t >= 0) { if (isCurrent) { vm.seekTo(line.t.toFloat()); if (!vm.playing) vm.togglePlay() } else vm.play(epId, line.t) },
+                            .clickable(enabled = line.t >= 0 || (syncMode && vm.showTimings)) {
+                                if (syncMode && vm.showTimings) selLine = if (selLine == i) -1 else i
+                                else if (isCurrent) { vm.seekTo(line.t.toFloat()); if (!vm.playing) vm.togglePlay() } else vm.play(epId, line.t)
+                            },
                     ) {
                         Box(Modifier.width(3.dp).fillMaxHeight().background(bar))
                         if (line.t >= 0) {
@@ -393,6 +404,11 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                             Text(highlight(line.text, q), style = MaterialTheme.typography.bodyLarge)
                         }
                         if (syncMode && vm.showTimings) {
+                            if (line.t >= 0) Box(
+                                Modifier.padding(end = 6.dp, top = 8.dp).align(Alignment.Top).clip(RoundedCornerShape(99.dp)).background(LColors.Surface3)
+                                    .pressable { if (isCurrent) { vm.seekTo(line.t.toFloat()); if (!vm.playing) vm.togglePlay() } else vm.play(epId, line.t) }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                            ) { Text("Play", style = MaterialTheme.typography.labelMedium, color = LColors.Text2) }
                             val pinned = edit?.anchors?.containsKey(i) == true
                             Box(
                                 Modifier.padding(end = 8.dp, top = 8.dp).align(Alignment.Top).clip(RoundedCornerShape(99.dp))
@@ -439,7 +455,21 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
 
 /** Controls shown while fixing timings by hand. Every change is saved on this device straight away. */
 @Composable
-private fun SyncPanel(vm: AppViewModel, epId: String, isCurrent: Boolean, source: String, edit: TxEdit, untimed: Boolean, anchorCount: Int) {
+private fun SyncPanel(
+    vm: AppViewModel, epId: String, isCurrent: Boolean, source: String, edit: TxEdit, untimed: Boolean, anchorCount: Int,
+    selLine: Int, tailScope: Boolean, onTailScope: (Boolean) -> Unit, onClearSel: () -> Unit, amount: String, onAmount: (String) -> Unit,
+) {
+    val seconds = amount.replace(',', '.').toDoubleOrNull()
+    val ms = if (seconds != null && seconds > 0) Math.min(3_600_000.0, Math.round(seconds * 1000.0).toDouble()).toInt() else 0
+    fun move(sign: Int) {
+        if (ms == 0) return
+        val (from, to) = when {
+            selLine < 0 -> 0 to -1
+            tailScope -> selLine to -1
+            else -> selLine to selLine
+        }
+        vm.saveTxEdit(epId, source, edit.shifted(from, to, sign * ms))
+    }
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(LColors.Surface).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -447,25 +477,49 @@ private fun SyncPanel(vm: AppViewModel, epId: String, isCurrent: Boolean, source
         Text("Fix the timing", style = MaterialTheme.typography.titleSmall)
         Text(
             if (untimed) "This text has no timings. Play the episode and tap Set on the line you are hearing. Set at least two lines, far apart (for example near the start and near the end); the lines between are spread evenly."
-            else "Play the episode and tap Set on the line you are hearing now. One Set moves everything; two far apart also fix drifting.",
+            else "Move by an amount you choose, or play the episode and tap Set on the line you are hearing now. Two Sets far apart also fix drifting.",
             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
         )
         if (!isCurrent) Text("Start playing this episode first, so Set knows the position.", style = MaterialTheme.typography.bodySmall, color = LColors.Red)
+
+        // move by any amount, earlier or later
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = amount, onValueChange = { onAmount(it.filter { c -> c.isDigit() || c == '.' || c == ',' }.take(7)) },
+                singleLine = true, label = { Text("Seconds") }, isError = ms == 0, modifier = Modifier.width(112.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
+            )
+            Chip("◀ Earlier", false) { move(-1) }
+            Chip("Later ▶", false) { move(1) }
+        }
+
+        // what the move applies to
+        if (selLine >= 0) {
+            Text("Moving line ${selLine + 1} only. Tap the line again to go back to the whole transcript.", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("This line only", !tailScope) { onTailScope(false) }
+                Chip("This line and after", tailScope) { onTailScope(true) }
+                Chip("Whole transcript", false) { onClearSel() }
+            }
+        } else {
+            Text("Moving the whole transcript. Tap a line to move only that line.", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+        }
+
+        val whole = edit.shifts.filter { it.from == 0 && it.to == -1 }.sumOf { it.ms } / 1000.0
+        Text(
+            "Whole transcript moved ${if (whole > 0) "+" else ""}${"%.1f".format(whole)} s · ${edit.shifts.count { !(it.from == 0 && it.to == -1) }} partial moves · $anchorCount line${if (anchorCount == 1) "" else "s"} set",
+            style = MaterialTheme.typography.labelSmall, color = LColors.Text3,
+        )
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Reset all", false) { vm.saveTxEdit(epId, source, TxEdit()); onClearSel() }
+        }
         Text(
             if (vm.timingIsShared(epId, source)) "Saved for everyone on your server, as well as on this phone." else "Saved on this phone only.",
             style = MaterialTheme.typography.labelSmall, color = LColors.Good,
         )
         vm.timingSaveError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = LColors.Red) }
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (d in listOf(-5, -1, 1, 5)) {
-                Chip((if (d > 0) "+" else "") + "$d s", false) { vm.saveTxEdit(epId, source, edit.copy(offset = edit.offset + d)) }
-            }
-            Chip("Reset", false) { vm.saveTxEdit(epId, source, TxEdit()) }
-        }
-        Text(
-            "Offset ${if (edit.offset > 0) "+" else ""}${edit.offset} s · $anchorCount line${if (anchorCount == 1) "" else "s"} set",
-            style = MaterialTheme.typography.labelSmall, color = LColors.Text3,
-        )
     }
 }
 

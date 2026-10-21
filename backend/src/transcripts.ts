@@ -17,7 +17,7 @@ interface Row {
   lines: string | null;
 }
 
-type Timing = { offset: number; anchors: [number, number][] };
+type Timing = { offset: number; anchors: [number, number][]; shifts: [number, number, number][] };
 
 function view(row: Row | null, timing?: Timing | null) {
   if (!row) return { status: "none", progress: 0, lines: [] };
@@ -35,7 +35,10 @@ async function timingOf(env: Env, epId: string): Promise<Timing | null> {
   try {
     const r = await env.DB.prepare("SELECT offset_sec, anchors FROM transcript_edits WHERE ep_id = ?").bind(epId).first<{ offset_sec: number; anchors: string }>();
     if (!r) return null;
-    return { offset: r.offset_sec, anchors: JSON.parse(r.anchors) };
+    // Stored as {"a": anchors, "s": shifts}. Older rows hold a plain array of anchors.
+    const j = JSON.parse(r.anchors);
+    if (Array.isArray(j)) return { offset: r.offset_sec, anchors: j, shifts: [] };
+    return { offset: r.offset_sec, anchors: j.a ?? [], shifts: j.s ?? [] };
   } catch {
     return null; // e.g. migration 0004 not applied yet: reading transcripts must keep working
   }
@@ -54,17 +57,26 @@ export async function putTiming(env: Env, req: Request, epId: string): Promise<R
     if (!Array.isArray(a) || a.length !== 2) continue;
     const i = Math.trunc(Number(a[0]));
     const sec = Math.trunc(Number(a[1]));
-    if (Number.isFinite(i) && Number.isFinite(sec) && i >= 0 && i < 200_000 && sec >= 0 && sec < 86_400) anchors.push([i, sec]);
+    if (Number.isFinite(i) && Number.isFinite(sec) && i >= 0 && i < 200_000 && sec > -7200 && sec < 86_400) anchors.push([i, sec]);
   }
-  if (offset === 0 && anchors.length === 0) {
+  // shifts: [firstLine, lastLine (-1 = to the end), milliseconds]
+  const shifts: [number, number, number][] = [];
+  for (const a of Array.isArray(b.shifts) ? (b.shifts as unknown[]).slice(0, 300) : []) {
+    if (!Array.isArray(a) || a.length !== 3) continue;
+    const from = Math.trunc(Number(a[0]));
+    const to = Math.trunc(Number(a[1]));
+    const delta = Math.trunc(Number(a[2]));
+    if ([from, to, delta].every(Number.isFinite) && from >= 0 && from < 200_000 && to >= -1 && to < 200_000 && delta !== 0 && Math.abs(delta) <= 3_600_000) shifts.push([from, to, delta]);
+  }
+  if (offset === 0 && anchors.length === 0 && shifts.length === 0) {
     await env.DB.prepare("DELETE FROM transcript_edits WHERE ep_id = ?").bind(epId).run();
     return json(env, { ok: true, timing: null });
   }
   await env.DB.prepare(
     `INSERT INTO transcript_edits (ep_id, offset_sec, anchors, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(ep_id) DO UPDATE SET offset_sec=excluded.offset_sec, anchors=excluded.anchors, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
-  ).bind(epId, offset, JSON.stringify(anchors), user?.id ?? "key", Date.now()).run();
-  return json(env, { ok: true, timing: { offset, anchors } });
+  ).bind(epId, offset, JSON.stringify({ a: anchors, s: shifts }), user?.id ?? "key", Date.now()).run();
+  return json(env, { ok: true, timing: { offset, anchors, shifts } });
 }
 
 /** Refuse anything that isn't a public https URL, so the Worker can't be pointed at internal addresses. */
