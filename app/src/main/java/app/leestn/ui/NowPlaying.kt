@@ -108,6 +108,8 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
     val total = if (vm.durationSec > 0) vm.durationSec else meta.dur
     var drag by remember { mutableStateOf<Float?>(null) }
     var sleepOpen by remember { mutableStateOf(false) }
+    var speedOpen by remember { mutableStateOf(false) }
+    if (speedOpen) SpeedDialog(vm) { speedOpen = false }
     // remaining sleep time, refreshed once a second only while the timer runs
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(vm.sleepEndsAt) {
@@ -140,7 +142,7 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                RoundText(speedLabel(vm.speed)) { vm.cycleSpeed() }
+                RoundText(speedText(vm.speed)) { speedOpen = true }
                 RoundText("−15") { vm.skip(-15) }
                 PlayButton(vm.playing, size = 72.dp, filled = true) { vm.togglePlay() }
                 RoundText("+30") { vm.skip(30) }

@@ -43,6 +43,19 @@ class TxLocal(ctx: Context) {
         prefs.edit().putString(k, JSONObject().put("o", e.offset).put("a", arr).put("s", sa).toString()).apply()
     }
 
+    /** Lines the person highlighted by hand in plain-text mode. */
+    fun highlights(epId: String, source: String): Set<Int> {
+        val s = prefs.getString("hl_${key(epId)}_$source", null) ?: return emptySet()
+        return try { val a = JSONArray(s); (0 until a.length()).map { a.getInt(it) }.toSet() } catch (e: Exception) { emptySet() }
+    }
+
+    fun saveHighlights(epId: String, source: String, set: Set<Int>) {
+        val k = "hl_${key(epId)}_$source"
+        if (set.isEmpty()) { prefs.edit().remove(k).apply(); return }
+        val a = JSONArray(); set.sorted().forEach { a.put(it) }
+        prefs.edit().putString(k, a.toString()).apply()
+    }
+
     private fun pasteFile(epId: String) = File(dir, key(epId) + ".txt")
     fun paste(epId: String): String? = pasteFile(epId).takeIf { it.exists() }?.readText()
     fun savePaste(epId: String, text: String) { pasteFile(epId).writeText(text) }

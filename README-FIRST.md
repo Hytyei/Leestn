@@ -1,27 +1,37 @@
-# Release 1.5.2: retry works, better transcript text, remove from Continue listening
+# Release 1.5.6: transcript timing that doesn't drift, playback speed, line highlighter
 
-**What changes for people**
+## New in the app (Android release)
 
-1. **Retry after a failed transcript now really retries.** Before, "Try again" only re-read the old failure from the server. Now it starts a new transcription. If the failure was "limit reached", it will work again after the reset.
-2. **Better transcript text** (the cause of garbled or wrong-language text):
-   - The show's language (from its feed) is now passed to the speech model. Before, the model guessed the language for every 1 MB slice separately, and short or musical slices came out as the wrong language or nonsense.
-   - The cover-art block at the start of MP3 files (ID3 tag) is no longer sent as "audio", and every slice now starts on a real MP3 frame.
-   - Lines the model invents over silence, loops of the same line, and low-confidence lines are removed.
-   - Timestamps are placed from the real byte position instead of a rough slice number.
-   - If the model refuses the new options, the server automatically falls back to the old plain call.
-3. **"Redo" button** on a generated transcript (when you're connected) to transcribe it again. It uses free Whisper time again and replaces the shared transcript for everyone on the server. Old bad transcripts are not fixed automatically; press Redo on the ones that look wrong.
-4. **Remove from Continue listening:** an X on each item. It forgets the saved position.
+- **Playback speed.** Tap the speed button in the full player, or the new **Speed** button on an episode page, to open a speed window: a slider from 0.5x to 3x in 0.05 steps, -0.05 / +0.05 buttons, and presets (0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3). The speed is remembered.
+- **Manual line highlighter (plain-text mode).** When Timings is off, or the transcript has no timestamps, tap a line to highlight it (same look as the playing line in timing mode: darker background and a red bar). Tap again to remove it. A **Clear highlights** chip appears when any are set. Highlights are kept on your phone per episode, separately for the original and pasted text. Pasting new text clears the pasted text's highlights, because the line numbers change. With Timings on and the transcript timed, tapping a line still jumps to it as before.
+
+## Backend: timing that doesn't drift
+
+**What was wrong.** The server cuts an episode into slices of about a minute and sends each to the speech model. It placed each slice on the timeline by guessing: "this slice starts X bytes into the file, so it starts at X/size of the episode's length". That is only right for constant-bitrate audio. Many podcasts are variable bitrate (quiet parts use fewer bytes), so a slice's real start time can be many seconds off, and the error grows differently for every slice. That is why a fix for the whole transcript (a constant shift) stops working after the first minute or two: the error isn't constant.
+
+**What changes.** For MP3 (and raw AAC) episodes, each slice now measures its own length by counting its audio frames, and the true start of every slice is the sum of the lengths of the slices before it (added up when the transcript is assembled, whatever order the slices finish in). Tested with a synthetic variable-bitrate file: every slice lands within 1 second of its true time, also when the file starts with a big cover-art tag, and when the slices finish out of order. M4A episodes were already exact. If a slice doesn't parse as MP3 the server falls back to the old estimate for that slice.
+
+**What this does not fix**
+- Transcripts that already exist keep their old timings. Press **Redo** on an episode (uses free Whisper time) to get the new timing, or fix it with Sync.
+- Episodes where the server's download differs from what your phone plays (dynamically inserted ads) can still be offset, and no timing method fixes that. Sync can fix a constant offset.
+- Invented lines (the model producing text over music or silence) are a different problem and are unchanged by this release.
 
 | Question | Answer |
 | --- | --- |
-| Database migration needed? | **No.** No tables or columns change. Do not run a migration. (If you never deployed 1.5.0, the script will still show and apply `0003_usage_meter.sql` after a backup and your `YES`.) |
+| Database migration needed? | **No.** No tables or columns change. Do not run any migration step. The format of the temporary per-slice data changes, but it is deleted when each transcript finishes and the new code reads both old and new formats. (If you never deployed 1.5.4, the script will still list and apply `0004_transcript_timing.sql` first, after a backup and your `YES`; likewise 0003 if you never deployed 1.5.0.) |
 | Worker deployment needed? | **Yes.** |
-| Android release needed? | **Yes** (retry fix, Redo, language, remove button). The text-quality fixes that don't need the language (ID3, filtering, timestamps) work with the old app too. |
+| Android release needed? | **Yes**, for speed and highlighter (app 1.5.6, versionCode 21). The timing fix itself is server-side and works with any app version. |
 | New secrets, bindings, dependencies? | None. `wrangler.toml` untouched. |
 
 ## Steps
 
-Patches in the zip: `leestn-v1.5.2.patch` (if you already applied 1.5.1) or `leestn-v1.5.2-from-1.0.patch` (everything, if you never applied any of the 1.5.x patches). Check, then apply (files on your PC only):
+Pick the patch that matches what you have applied (all bring you to 1.5.6):
+
+- `leestn-v1.5.6-from-1.5.5.patch`: you applied 1.5.5.
+- `leestn-v1.5.6-from-1.5.4.patch`: you stopped at 1.5.4.
+- `leestn-v1.5.6-from-1.0.patch`: you applied none of the 1.5.x patches (this one also includes the 1.5.x app changes).
+
+Check first (changes nothing), then apply (files on your PC only):
 
     git apply --check <patch name>
     git apply <patch name>
@@ -30,9 +40,11 @@ Patches in the zip: `leestn-v1.5.2.patch` (if you already applied 1.5.1) or `lee
 
     powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
 
-It runs the tests, lists waiting migrations (expect none), asks `YES` for a backup, asks `YES` to deploy the existing `leestn-api`, and checks `/health` shows `1.5.2`.
+The script checks `wrangler.toml` points at the real Worker `leestn-api`, database `leestn` and queue `leestn-transcribe`; runs the tests on your PC; lists waiting migrations (read-only; expect "No migrations to apply"); asks `YES`, then saves a full backup of the live database to `backups\`; does a dry run of the Worker; asks `YES`, then deploys the existing `leestn-api`; checks `/health` shows `1.5.6`.
 
-App: `git add -A`, commit, push, `git tag v1.5.2`, `git push origin v1.5.2`. The app then offers the update (Settings → About → Check for updates).
+Save it in Git: `git add -A`, `git commit -m "1.5.6: exact MP3 timing, playback speed, line highlighter"`, `git push`. Then the app: `git tag v1.5.6`, `git push origin v1.5.6`; when the GitHub build finishes, open Settings → About → Check for updates on the phone.
+
+**Safe moment to deploy:** avoid deploying while a transcript is being generated. A slice already stored in the old format while others use the new one only affects that one transcript's timing, and Redo fixes it.
 
 ## Rollback
 
@@ -40,7 +52,8 @@ Code only: `npx wrangler rollback` in `backend`. No data changes in this release
 
 ## Risks
 
-- **The new speech-model options (language, voice-activity filter) are untested against the real Workers AI.** The tests use a fake model. The server falls back to the old plain call if the model rejects them, so it can't make things worse than before, but I can't promise the quality gain until you try. Test with the same episodes that came out wrong, press Redo, and tell me what you see.
-- **MP3 timestamps are still estimates** (the episode length from the feed spread by bytes), so on a variable-bitrate file or an episode with inserted ads they can drift by seconds. M4A timestamps are exact.
-- Transcripts are cut into slices of about a minute; a word cut at a slice edge can be lost or doubled.
-- The Android code has still not been compiled by me.
+- **The Android code has never been compiled by me.** The new speed window and highlighter are untested on a device; if the build fails, paste the error and I will fix it.
+
+- **Tested with synthetic MP3 files, not with a real podcast through the real Workers AI.** Please Redo one episode that had drifting timing and tell me whether it is now right, and where it is still off.
+- Counting frames assumes standard MP3 (MPEG audio Layer III). Anything else falls back to the old estimate.
+- The time between slices is exact only to about a frame (26 ms) per slice; over 100 slices a fraction of a second at most.

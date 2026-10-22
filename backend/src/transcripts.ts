@@ -151,6 +151,27 @@ function mp3FrameLen(b: Uint8Array, i: number): number {
   return Math.floor(((ver === 3 ? 144 : 72) * br) / sr) + pad;
 }
 
+/**
+ * Exact playing time of the frames that start in b[start, limit). Slices are cut at byte positions, but time is not
+ * proportional to bytes in variable-bitrate files, so each slice measures its own length by counting frames.
+ * Returns null when the data doesn't parse as MP3 for most of the slice (then the caller estimates instead).
+ */
+function mp3SliceSeconds(b: Uint8Array, start: number, limit: number): number | null {
+  const end = Math.min(limit, b.length);
+  let pos = start;
+  let sec = 0;
+  while (pos < end) {
+    const l = mp3FrameLen(b, pos);
+    if (!l) break;
+    const ver = (b[pos + 1] >> 3) & 3;
+    const sr = (MP3_SR as any)[ver][(b[pos + 2] >> 2) & 3] as number;
+    sec += (ver === 3 ? 1152 : 576) / sr;
+    pos += l;
+  }
+  const span = end - start;
+  return span > 0 && (pos - start) / span >= 0.9 ? sec : null;
+}
+
 /** Index of the first real MP3 frame (confirmed by a second frame right after it). Slices are cut at arbitrary bytes. */
 function mp3Start(b: Uint8Array): number {
   const limit = Math.min(b.length - 4, 8192);
@@ -417,7 +438,12 @@ async function fail(env: Env, epId: string, message: string) {
 }
 
 /** Gets the audio of one piece as bytes Whisper can decode, plus where the piece starts and how long it is, in seconds. */
-async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint8Array; offset: number; span: number }> {
+/**
+ * `rel` pieces (MP3, raw AAC) report times relative to the start of the slice; the real start of each slice is the sum of
+ * the lengths of the slices before it, added up in assemble(). `exact` is the measured length of the slice in seconds.
+ * M4A pieces know their absolute start time.
+ */
+async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint8Array; offset: number; span: number; rel: boolean; exact?: number }> {
   const chunkBytes = int(env.CHUNK_BYTES, 1_048_576, 65_536, 4 * 1024 * 1024);
   const read = (from: number, to: number) => readRange(row.audio_url, from, to);
   if (job.aac) {
@@ -426,36 +452,43 @@ async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint
     const bytes = await buildAdts(slice, a, read);
     const frames = slice.runs.reduce((n, r) => n + r[1].length, 0);
     const rate = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350][a.sfi] ?? 44100;
-    return { bytes, offset: slice.t0, span: (frames * 1024) / rate };
+    return { bytes, offset: slice.t0, span: (frames * 1024) / rate, rel: false };
   }
   // MP3 and raw AAC: a byte range. Timing comes from the byte position and the episode length (or a 128 kbps guess).
   const id3 = job.id3 ?? 0;
   const from = Math.max(job.idx * chunkBytes, id3);
   const end = job.idx * chunkBytes + chunkBytes;
-  if (end <= from) return { bytes: new Uint8Array(0), offset: 0, span: 0 }; // this slice is all tag (cover art)
-  let bytes = await read(from, end);
+  if (end <= from) return { bytes: new Uint8Array(0), offset: 0, span: 0, rel: true, exact: 0 }; // this slice is all tag (cover art)
+  let bytes = await read(from, end + 8); // a few bytes more, so the header of the frame that straddles the end can be read
+  let exact: number | undefined;
   if (job.fmt === "adts") {
     let i = 0;
     while (i + 1 < bytes.length && !isAdts(bytes.subarray(i))) i++;
     bytes = bytes.subarray(i);
   } else {
-    bytes = bytes.subarray(mp3Start(bytes)); // start on a whole frame so the decoder isn't confused
+    const first = mp3Start(bytes); // start on a whole frame so the decoder isn't confused
+    exact = mp3SliceSeconds(bytes, first, end - from) ?? undefined;
+    bytes = bytes.subarray(first, Math.max(first, end - from));
   }
   const audioBytes = job.sz && job.sz > id3 ? job.sz - id3 : row.chunks_total * chunkBytes;
   const total = job.dur && job.dur > 0 ? job.dur : row.duration_sec > 0 ? row.duration_sec : (audioBytes * 8) / 128_000;
   const at = (byte: number) => timeAtByteFraction(Math.min(1, (byte - id3) / audioBytes), total, job.toc);
   const offset = at(from);
   const span = Math.max(1, at(Math.min(end, id3 + audioBytes)) - offset);
-  return { bytes, offset, span };
+  return { bytes, offset, span, rel: true, exact };
 }
 
 async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void> {
   const idx = job.idx;
-  const { bytes, offset, span: exactPerChunk } = await pieceOf(env, row, job);
+  const piece = await pieceOf(env, row, job);
+  const { bytes, rel } = piece;
+  const base = rel ? 0 : piece.offset; // rel slices keep times relative to their own start
+  const dur = Math.round((piece.exact ?? piece.span) * 1000) / 1000;
+  const store = (segs: Segment[]) => (rel ? JSON.stringify({ rel: 1, dur, segs }) : JSON.stringify(segs));
 
   if (bytes.length < 2000) {
-    // nothing to transcribe here (tag only)
-    await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, '[]')").bind(row.ep_id, idx).run();
+    // nothing to transcribe here (tag only, or a few bytes at the very end)
+    await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, store([])).run();
     return finishChunk(env, row);
   }
   const out: any = await runWhisper(env, bytesToBase64(bytes), job.lang);
@@ -464,18 +497,16 @@ async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void>
   if (Array.isArray(out?.segments) && out.segments.length) {
     for (const s of cleanSegments(out.segments)) {
       const text = String(s.text ?? "").trim();
-      if (text) segs.push({ start: offset + Number(s.start ?? 0), end: offset + Number(s.end ?? 0), text });
+      if (text) segs.push({ start: base + Number(s.start ?? 0), end: base + Number(s.end ?? 0), text });
     }
   } else if (typeof out?.text === "string" && out.text.trim()) {
     // No timestamps from the model: split into sentences and spread them across the slice.
     const parts = out.text.trim().split(/(?<=[.!?])\s+/).filter(Boolean);
-    const step = exactPerChunk / Math.max(1, parts.length);
-    parts.forEach((text: string, i: number) => segs.push({ start: offset + i * step, end: offset + (i + 1) * step, text }));
+    const step = (piece.exact ?? piece.span) / Math.max(1, parts.length);
+    parts.forEach((text: string, i: number) => segs.push({ start: base + i * step, end: base + (i + 1) * step, text }));
   }
 
-  await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)")
-    .bind(row.ep_id, idx, JSON.stringify(segs))
-    .run();
+  await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, store(segs)).run();
 
   return finishChunk(env, row);
 }
@@ -525,17 +556,32 @@ function cleanSegments(raw: any[]): any[] {
   return out;
 }
 
+/** What a stored slice holds: M4A slices are a plain array with absolute times; MP3/AAC slices are {rel, dur, segs}. */
+type Stored = Segment[] | { rel: 1; dur?: number; segs: Segment[]; skip?: string };
+
 async function assemble(env: Env, epId: string) {
   const rows = await env.DB.prepare("SELECT segments FROM transcript_chunks WHERE ep_id = ? ORDER BY idx").bind(epId).all<{ segments: string }>();
   const lines: { t: number; text: string }[] = [];
+  const skipReasons: string[] = [];
+  const total = await env.DB.prepare("SELECT duration_sec, chunks_total FROM transcripts WHERE ep_id = ?").bind(epId).first<{ duration_sec: number; chunks_total: number }>();
+  const guess = total && total.duration_sec > 0 ? total.duration_sec / Math.max(1, total.chunks_total) : 65; // only used for a slice with no measured length
+  let acc = 0; // seconds of audio before the current slice
   for (const r of rows.results) {
-    for (const s of JSON.parse(r.segments) as Segment[]) if (s.text) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
+    const v = JSON.parse(r.segments) as Stored;
+    if (Array.isArray(v)) {
+      for (const s of v) {
+        if ((s as any).skip) skipReasons.push(String((s as any).skip));
+        if (s.text) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
+      }
+      continue;
+    }
+    if (v.skip) skipReasons.push(v.skip);
+    for (const s of v.segs) if (s.text) lines.push({ t: Math.max(0, Math.round(acc + s.start)), text: s.text });
+    acc += typeof v.dur === "number" && v.dur >= 0 ? v.dur : guess;
   }
-  const skippedRows = rows.results.filter((r) => r.segments.includes('"skip"'));
-  const skipped = skippedRows.length;
+  const skipped = skipReasons.length;
   if (skipped * 4 > rows.results.length) {
-    const why = (JSON.parse(skippedRows[0].segments)[0]?.skip as string) || "unknown error";
-    return fail(env, epId, `${skipped} of ${rows.results.length} parts couldn't be transcribed (${why})`);
+    return fail(env, epId, `${skipped} of ${rows.results.length} parts couldn't be transcribed (${skipReasons[0] || "unknown error"})`);
   }
   if (!lines.length) return fail(env, epId, "No speech was recognised in this episode");
   const note = skipped ? `${skipped} short part${skipped > 1 ? "s" : ""} couldn't be transcribed and ${skipped > 1 ? "are" : "is"} missing.` : null;
@@ -548,7 +594,7 @@ async function assemble(env: Env, epId: string) {
 /** Queue consumer: one message is one slice of one episode. */
 /** A slice that keeps failing is recorded as skipped, so one bad part doesn't lose the whole episode. */
 async function skipChunk(env: Env, row: Row, idx: number, message: string): Promise<void> {
-  const mark = JSON.stringify([{ start: 0, end: 0, text: "", skip: message.slice(0, 160) }]);
+  const mark = JSON.stringify({ rel: 1, skip: message.slice(0, 160), segs: [] }); // no measured length: assemble() substitutes an estimate
   await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, mark).run();
   const done = await env.DB.prepare("SELECT COUNT(*) AS n FROM transcript_chunks WHERE ep_id = ?").bind(row.ep_id).first<{ n: number }>();
   if ((done?.n ?? 0) >= row.chunks_total) await assemble(env, row.ep_id);

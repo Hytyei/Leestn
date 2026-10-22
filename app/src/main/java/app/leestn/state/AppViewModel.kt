@@ -143,6 +143,22 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     /** "paste" or "orig": which transcript to show when an episode has both. */
     val txSource = mutableStateMapOf<String, String>()
 
+    /** Lines highlighted by hand in plain-text mode, keyed "episode|orig" or "episode|paste". */
+    val txHighlights = mutableStateMapOf<String, Set<Int>>()
+
+    fun toggleHighlight(epId: String, source: String, line: Int) {
+        val k = "$epId|$source"
+        val cur = txHighlights[k] ?: emptySet()
+        val next = if (line in cur) cur - line else cur + line
+        txHighlights[k] = next
+        viewModelScope.launch(Dispatchers.IO) { txLocal.saveHighlights(epId, source, next) }
+    }
+
+    fun clearHighlights(epId: String, source: String) {
+        txHighlights["$epId|$source"] = emptySet()
+        viewModelScope.launch(Dispatchers.IO) { txLocal.saveHighlights(epId, source, emptySet()) }
+    }
+
     fun changeShowTimings(on: Boolean) { showTimings = on; txLocal.timings = on }
 
     fun loadTxLocal(epId: String) {
@@ -151,6 +167,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             val (text, src, eo, ep) = withContext(Dispatchers.IO) {
                 listOf(txLocal.paste(epId), txLocal.source(epId), txLocal.edit(epId, "orig"), txLocal.edit(epId, "paste"))
             }
+            val hOrig = withContext(Dispatchers.IO) { txLocal.highlights(epId, "orig") }
+            val hPaste = withContext(Dispatchers.IO) { txLocal.highlights(epId, "paste") }
+            txHighlights["$epId|orig"] = hOrig
+            txHighlights["$epId|paste"] = hPaste
             if (text is String) pasted[epId] = text
             if ("$epId|orig" !in txEdits) txEdits["$epId|orig"] = eo as TxEdit // a fix from the server may already be here
             txEdits["$epId|paste"] = ep as TxEdit
@@ -162,6 +182,8 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         pasted[epId] = text
         txSource[epId] = "paste"
         txEdits["$epId|paste"] = TxEdit() // new text, old timing fixes no longer fit
+        txHighlights["$epId|paste"] = emptySet() // and old highlights point at different lines
+        viewModelScope.launch(Dispatchers.IO) { txLocal.saveHighlights(epId, "paste", emptySet()) }
         viewModelScope.launch(Dispatchers.IO) {
             txLocal.savePaste(epId, text)
             txLocal.setSource(epId, "paste")
@@ -1446,6 +1468,13 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun skip(delta: Int) = seekTo(t + delta)
+
+    /** Any speed from 0.5 to 3, in steps of 0.05. Pitch is kept by the player. */
+    fun changeSpeed(v: Float) {
+        speed = (Math.round(v.coerceIn(0.5f, 3f) * 20f) / 20f)
+        controller?.setPlaybackSpeed(speed)
+        save(widgets = false)
+    }
 
     fun cycleSpeed() {
         speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f }

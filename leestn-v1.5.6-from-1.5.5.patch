@@ -1,0 +1,620 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 137d3f8..4cf7d2c 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         applicationId = "app.leestn"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 20
+-        versionName = "1.5.5"
++        versionCode = 21
++        versionName = "1.5.6"
+     }
+ 
+     signingConfigs {
+diff --git a/app/src/main/java/app/leestn/data/TxLocal.kt b/app/src/main/java/app/leestn/data/TxLocal.kt
+index c610823..8f91a6e 100644
+--- a/app/src/main/java/app/leestn/data/TxLocal.kt
++++ b/app/src/main/java/app/leestn/data/TxLocal.kt
+@@ -43,6 +43,19 @@ class TxLocal(ctx: Context) {
+         prefs.edit().putString(k, JSONObject().put("o", e.offset).put("a", arr).put("s", sa).toString()).apply()
+     }
+ 
++    /** Lines the person highlighted by hand in plain-text mode. */
++    fun highlights(epId: String, source: String): Set<Int> {
++        val s = prefs.getString("hl_${key(epId)}_$source", null) ?: return emptySet()
++        return try { val a = JSONArray(s); (0 until a.length()).map { a.getInt(it) }.toSet() } catch (e: Exception) { emptySet() }
++    }
++
++    fun saveHighlights(epId: String, source: String, set: Set<Int>) {
++        val k = "hl_${key(epId)}_$source"
++        if (set.isEmpty()) { prefs.edit().remove(k).apply(); return }
++        val a = JSONArray(); set.sorted().forEach { a.put(it) }
++        prefs.edit().putString(k, a.toString()).apply()
++    }
++
+     private fun pasteFile(epId: String) = File(dir, key(epId) + ".txt")
+     fun paste(epId: String): String? = pasteFile(epId).takeIf { it.exists() }?.readText()
+     fun savePaste(epId: String, text: String) { pasteFile(epId).writeText(text) }
+diff --git a/app/src/main/java/app/leestn/state/AppViewModel.kt b/app/src/main/java/app/leestn/state/AppViewModel.kt
+index 893ae09..853b2b1 100644
+--- a/app/src/main/java/app/leestn/state/AppViewModel.kt
++++ b/app/src/main/java/app/leestn/state/AppViewModel.kt
+@@ -143,6 +143,22 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+     /** "paste" or "orig": which transcript to show when an episode has both. */
+     val txSource = mutableStateMapOf<String, String>()
+ 
++    /** Lines highlighted by hand in plain-text mode, keyed "episode|orig" or "episode|paste". */
++    val txHighlights = mutableStateMapOf<String, Set<Int>>()
++
++    fun toggleHighlight(epId: String, source: String, line: Int) {
++        val k = "$epId|$source"
++        val cur = txHighlights[k] ?: emptySet()
++        val next = if (line in cur) cur - line else cur + line
++        txHighlights[k] = next
++        viewModelScope.launch(Dispatchers.IO) { txLocal.saveHighlights(epId, source, next) }
++    }
++
++    fun clearHighlights(epId: String, source: String) {
++        txHighlights["$epId|$source"] = emptySet()
++        viewModelScope.launch(Dispatchers.IO) { txLocal.saveHighlights(epId, source, emptySet()) }
++    }
++
+     fun changeShowTimings(on: Boolean) { showTimings = on; txLocal.timings = on }
+ 
+     fun loadTxLocal(epId: String) {
+@@ -151,6 +167,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+             val (text, src, eo, ep) = withContext(Dispatchers.IO) {
+                 listOf(txLocal.paste(epId), txLocal.source(epId), txLocal.edit(epId, "orig"), txLocal.edit(epId, "paste"))
+             }
++            val hOrig = withContext(Dispatchers.IO) { txLocal.highlights(epId, "orig") }
++            val hPaste = withContext(Dispatchers.IO) { txLocal.highlights(epId, "paste") }
++            txHighlights["$epId|orig"] = hOrig
++            txHighlights["$epId|paste"] = hPaste
+             if (text is String) pasted[epId] = text
+             if ("$epId|orig" !in txEdits) txEdits["$epId|orig"] = eo as TxEdit // a fix from the server may already be here
+             txEdits["$epId|paste"] = ep as TxEdit
+@@ -162,6 +182,8 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+         pasted[epId] = text
+         txSource[epId] = "paste"
+         txEdits["$epId|paste"] = TxEdit() // new text, old timing fixes no longer fit
++        txHighlights["$epId|paste"] = emptySet() // and old highlights point at different lines
++        viewModelScope.launch(Dispatchers.IO) { txLocal.saveHighlights(epId, "paste", emptySet()) }
+         viewModelScope.launch(Dispatchers.IO) {
+             txLocal.savePaste(epId, text)
+             txLocal.setSource(epId, "paste")
+@@ -1447,6 +1469,13 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+ 
+     fun skip(delta: Int) = seekTo(t + delta)
+ 
++    /** Any speed from 0.5 to 3, in steps of 0.05. Pitch is kept by the player. */
++    fun changeSpeed(v: Float) {
++        speed = (Math.round(v.coerceIn(0.5f, 3f) * 20f) / 20f)
++        controller?.setPlaybackSpeed(speed)
++        save(widgets = false)
++    }
++
+     fun cycleSpeed() {
+         speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f }
+         controller?.setPlaybackSpeed(speed)
+diff --git a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+index de8765e..edddae1 100644
+--- a/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
++++ b/app/src/main/java/app/leestn/ui/EpisodeScreen.kt
+@@ -78,6 +78,7 @@ import app.leestn.data.Episode
+ import app.leestn.data.Kind
+ import app.leestn.data.ListItem
+ import app.leestn.state.AppViewModel
++import androidx.compose.material.icons.rounded.Speed
+ import androidx.compose.ui.text.input.KeyboardType
+ import androidx.compose.foundation.text.KeyboardOptions
+ import app.leestn.data.TxEditing
+@@ -166,11 +167,15 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+     val fixedLines = remember(baseLines, edit) { TxEditing.apply(baseLines, edit) }
+     val lines = if (vm.showTimings) fixedLines else remember(fixedLines) { fixedLines.map { it.copy(t = -1) } }
+     val synced = vm.showTimings && lines.any { it.t >= 0 }
++    // Plain-text mode (no timings shown, or text that has none): tap a line to highlight it by hand.
++    val plainMode = lines.isNotEmpty() && !synced
++    val marks = vm.txHighlights["$epId|$txSourceKey"] ?: emptySet()
+     var syncMode by rememberSaveable(epId) { mutableStateOf(false) }
+     var selLine by rememberSaveable(epId) { mutableStateOf(-1) } // line chosen for moving, -1 = whole transcript
+     var tailScope by rememberSaveable(epId) { mutableStateOf(false) } // move the chosen line and everything after it
+     var amount by rememberSaveable(epId) { mutableStateOf("1") } // seconds to move by
+     var pasteDialog by remember { mutableStateOf(false) }
++    var speedDialog by remember { mutableStateOf(false) }
+     val activeIdx by remember(epId, lines) { derivedStateOf { if (synced && vm.playingId == epId) lines.indexOfLast { it.t >= 0 && it.t <= vm.t } else -1 } }
+     var query by rememberSaveable(epId) { mutableStateOf("") }
+     var follow by rememberSaveable { mutableStateOf(true) }
+@@ -226,6 +231,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                         if (loading) "Loading" else if (playingNow) "Pause" else if (isCurrent && vm.t > 0f) "Resume" else "Play",
+                         if (playingNow) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, primary = true,
+                     ) { if (isCurrent) vm.togglePlay() else vm.play(epId) }
++                    ActionPill("Speed ${speedText(vm.speed)}", Icons.Rounded.Speed) { speedDialog = true }
+                     val wish = vm.inWishlist(ListItem.Ep(epId))
+                     ActionPill(if (wish) "In wishlist" else "Wishlist", if (wish) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, active = wish) {
+                         vm.toggleInList("wishlist", ListItem.Ep(epId))
+@@ -304,8 +310,8 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                     Column(Modifier.weight(1f)) {
+                         Text("Transcript", style = MaterialTheme.typography.titleLarge)
+                         Text(
+-                            if (!vm.showTimings && lines.isNotEmpty()) "Timings are hidden. Turn Timings on to follow playback."
+-                            else if (lines.isNotEmpty() && !synced) "This transcript has no timestamps, so it can't follow playback. Use Sync to add them."
++                            if (!vm.showTimings && lines.isNotEmpty()) "Timings are hidden. Tap a line to highlight it, or turn Timings on to follow playback."
++                            else if (lines.isNotEmpty() && !synced) "This transcript has no timestamps, so it can't follow playback. Tap a line to highlight it, or use Sync to add timings."
+                             else if (useCustom) "Your pasted transcript. Tap a line to jump there."
+                             else if (tx is TxState.Ready && tx.generated) "Generated by speech recognition, so expect small mistakes. Tap a line to jump there."
+                             else "Follows playback. Tap a line to jump there.",
+@@ -319,6 +325,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                     if (lines.isNotEmpty()) Chip("Timings", vm.showTimings) { vm.changeShowTimings(!vm.showTimings); if (!vm.showTimings) { syncMode = false; selLine = -1 } }
+                     if (lines.isNotEmpty() && vm.showTimings) Chip("Sync", syncMode) { syncMode = !syncMode; if (!syncMode) selLine = -1 }
+                     Chip(if (pastedText != null) "Edit pasted text" else "Paste text", false) { pasteDialog = true }
++                    if (plainMode && marks.isNotEmpty()) Chip("Clear highlights", false) { vm.clearHighlights(epId, txSourceKey) }
+                     if (pastedText != null && tx is TxState.Ready) {
+                         Chip("Original", !useCustom) { vm.chooseTxSource(epId, "orig") }
+                         Chip("Pasted", useCustom) { vm.chooseTxSource(epId, "paste") }
+@@ -380,16 +387,18 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+                     val active = i == activeIdx
+                     val past = activeIdx >= 0 && i < activeIdx
+                     val chosen = syncMode && vm.showTimings && i == selLine
+-                    val bg by animateColorAsState(if (active || chosen) LColors.Surface2 else Color.Transparent, tween(Motion.Normal), label = "txBg")
+-                    val bar by animateColorAsState(if (chosen) LColors.Side else if (active) LColors.Red else Color.Transparent, tween(Motion.Normal), label = "txBar")
+-                    val a by animateFloatAsState(if (active) 1f else if (past) 0.45f else 0.85f, tween(Motion.Normal), label = "txAlpha")
++                    val marked = plainMode && !(syncMode && vm.showTimings) && i in marks
++                    val bg by animateColorAsState(if (active || chosen || marked) LColors.Surface2 else Color.Transparent, tween(Motion.Normal), label = "txBg")
++                    val bar by animateColorAsState(if (chosen) LColors.Side else if (active || marked) LColors.Red else Color.Transparent, tween(Motion.Normal), label = "txBar")
++                    val a by animateFloatAsState(if (active || marked) 1f else if (past) 0.45f else 0.85f, tween(Motion.Normal), label = "txAlpha")
+                     Row(
+                         Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(IntrinsicSize.Min)
+                             .alpha(a)
+                             .clip(RoundedCornerShape(12.dp))
+                             .background(bg)
+-                            .clickable(enabled = line.t >= 0 || (syncMode && vm.showTimings)) {
++                            .clickable(enabled = line.t >= 0 || (syncMode && vm.showTimings) || plainMode) {
+                                 if (syncMode && vm.showTimings) selLine = if (selLine == i) -1 else i
++                                else if (plainMode) vm.toggleHighlight(epId, txSourceKey, i)
+                                 else if (isCurrent) { vm.seekTo(line.t.toFloat()); if (!vm.playing) vm.togglePlay() } else vm.play(epId, line.t)
+                             },
+                     ) {
+@@ -426,6 +435,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow:
+         }
+     }
+ 
++    if (speedDialog) SpeedDialog(vm) { speedDialog = false }
+     if (pasteDialog) PasteDialog(
+         initial = pastedText ?: "",
+         onSave = { vm.savePasted(epId, it); pasteDialog = false },
+diff --git a/app/src/main/java/app/leestn/ui/NowPlaying.kt b/app/src/main/java/app/leestn/ui/NowPlaying.kt
+index 01017ed..36943d4 100644
+--- a/app/src/main/java/app/leestn/ui/NowPlaying.kt
++++ b/app/src/main/java/app/leestn/ui/NowPlaying.kt
+@@ -108,6 +108,8 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
+     val total = if (vm.durationSec > 0) vm.durationSec else meta.dur
+     var drag by remember { mutableStateOf<Float?>(null) }
+     var sleepOpen by remember { mutableStateOf(false) }
++    var speedOpen by remember { mutableStateOf(false) }
++    if (speedOpen) SpeedDialog(vm) { speedOpen = false }
+     // remaining sleep time, refreshed once a second only while the timer runs
+     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+     LaunchedEffect(vm.sleepEndsAt) {
+@@ -140,7 +142,7 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
+                 }
+             }
+             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+-                RoundText(speedLabel(vm.speed)) { vm.cycleSpeed() }
++                RoundText(speedText(vm.speed)) { speedOpen = true }
+                 RoundText("−15") { vm.skip(-15) }
+                 PlayButton(vm.playing, size = 72.dp, filled = true) { vm.togglePlay() }
+                 RoundText("+30") { vm.skip(30) }
+diff --git a/app/src/main/java/app/leestn/ui/SpeedUi.kt b/app/src/main/java/app/leestn/ui/SpeedUi.kt
+new file mode 100644
+index 0000000..a81ab11
+--- /dev/null
++++ b/app/src/main/java/app/leestn/ui/SpeedUi.kt
+@@ -0,0 +1,52 @@
++package app.leestn.ui
++
++import androidx.compose.foundation.horizontalScroll
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.material3.AlertDialog
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Slider
++import androidx.compose.material3.SliderDefaults
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.unit.dp
++import app.leestn.state.AppViewModel
++import app.leestn.ui.theme.LColors
++
++/** 1.0 -> "1×", 1.25 -> "1.25×", 1.5 -> "1.5×". */
++fun speedText(s: Float): String = "%.2f".format(java.util.Locale.US, s).trimEnd('0').trimEnd('.') + "×"
++
++/** Pick any playback speed from 0.5× to 3× in steps of 0.05. The speed is remembered and used for every episode. */
++@Composable
++fun SpeedDialog(vm: AppViewModel, onClose: () -> Unit) {
++    AlertDialog(
++        onDismissRequest = onClose,
++        containerColor = LColors.Surface,
++        title = { Text("Playback speed") },
++        text = {
++            Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
++                Text(speedText(vm.speed), style = MaterialTheme.typography.displaySmall)
++                Slider(
++                    value = vm.speed, onValueChange = { vm.changeSpeed(it) }, valueRange = 0.5f..3f, steps = 49,
++                    colors = SliderDefaults.colors(thumbColor = LColors.Red, activeTrackColor = LColors.Red, inactiveTrackColor = LColors.Surface3),
++                )
++                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
++                    Chip("−0.05", false) { vm.changeSpeed(vm.speed - 0.05f) }
++                    Chip("+0.05", false) { vm.changeSpeed(vm.speed + 0.05f) }
++                }
++                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                    for (v in listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)) {
++                        Chip(speedText(v), kotlin.math.abs(vm.speed - v) < 0.001f) { vm.changeSpeed(v) }
++                    }
++                }
++            }
++        },
++        confirmButton = { TextButton(onClick = onClose) { Text("Done") } },
++    )
++}
+diff --git a/backend/package.json b/backend/package.json
+index 2904716..7f53f6c 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "leestn-api",
+-  "version": "1.5.5",
++  "version": "1.5.6",
+   "private": true,
+   "type": "module",
+   "scripts": {
+@@ -10,7 +10,7 @@
+     "db:migrate:local": "wrangler d1 migrations apply leestn --local",
+     "db:migrate:remote": "wrangler d1 migrations apply leestn --remote",
+     "tail": "wrangler tail",
+-    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts && bun run test/timing.ts"
++    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts && bun run test/timing.ts && bun run test/exact.ts"
+   },
+   "devDependencies": {
+     "@cloudflare/workers-types": "^4.20250214.0",
+diff --git a/backend/src/index.ts b/backend/src/index.ts
+index f28656d..44b024c 100644
+--- a/backend/src/index.ts
++++ b/backend/src/index.ts
+@@ -11,7 +11,7 @@ async function route(req: Request, env: Env): Promise<Response> {
+   const m = req.method;
+   let r: RegExpMatchArray | null;
+ 
+-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.5" });
++  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.6" });
+ 
+   // Transcripts (invite key or account token)
+   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
+diff --git a/backend/src/transcripts.ts b/backend/src/transcripts.ts
+index dd6168d..5d90049 100644
+--- a/backend/src/transcripts.ts
++++ b/backend/src/transcripts.ts
+@@ -151,6 +151,27 @@ function mp3FrameLen(b: Uint8Array, i: number): number {
+   return Math.floor(((ver === 3 ? 144 : 72) * br) / sr) + pad;
+ }
+ 
++/**
++ * Exact playing time of the frames that start in b[start, limit). Slices are cut at byte positions, but time is not
++ * proportional to bytes in variable-bitrate files, so each slice measures its own length by counting frames.
++ * Returns null when the data doesn't parse as MP3 for most of the slice (then the caller estimates instead).
++ */
++function mp3SliceSeconds(b: Uint8Array, start: number, limit: number): number | null {
++  const end = Math.min(limit, b.length);
++  let pos = start;
++  let sec = 0;
++  while (pos < end) {
++    const l = mp3FrameLen(b, pos);
++    if (!l) break;
++    const ver = (b[pos + 1] >> 3) & 3;
++    const sr = (MP3_SR as any)[ver][(b[pos + 2] >> 2) & 3] as number;
++    sec += (ver === 3 ? 1152 : 576) / sr;
++    pos += l;
++  }
++  const span = end - start;
++  return span > 0 && (pos - start) / span >= 0.9 ? sec : null;
++}
++
+ /** Index of the first real MP3 frame (confirmed by a second frame right after it). Slices are cut at arbitrary bytes. */
+ function mp3Start(b: Uint8Array): number {
+   const limit = Math.min(b.length - 4, 8192);
+@@ -417,7 +438,12 @@ async function fail(env: Env, epId: string, message: string) {
+ }
+ 
+ /** Gets the audio of one piece as bytes Whisper can decode, plus where the piece starts and how long it is, in seconds. */
+-async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint8Array; offset: number; span: number }> {
++/**
++ * `rel` pieces (MP3, raw AAC) report times relative to the start of the slice; the real start of each slice is the sum of
++ * the lengths of the slices before it, added up in assemble(). `exact` is the measured length of the slice in seconds.
++ * M4A pieces know their absolute start time.
++ */
++async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint8Array; offset: number; span: number; rel: boolean; exact?: number }> {
+   const chunkBytes = int(env.CHUNK_BYTES, 1_048_576, 65_536, 4 * 1024 * 1024);
+   const read = (from: number, to: number) => readRange(row.audio_url, from, to);
+   if (job.aac) {
+@@ -426,36 +452,43 @@ async function pieceOf(env: Env, row: Row, job: ChunkJob): Promise<{ bytes: Uint
+     const bytes = await buildAdts(slice, a, read);
+     const frames = slice.runs.reduce((n, r) => n + r[1].length, 0);
+     const rate = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350][a.sfi] ?? 44100;
+-    return { bytes, offset: slice.t0, span: (frames * 1024) / rate };
++    return { bytes, offset: slice.t0, span: (frames * 1024) / rate, rel: false };
+   }
+   // MP3 and raw AAC: a byte range. Timing comes from the byte position and the episode length (or a 128 kbps guess).
+   const id3 = job.id3 ?? 0;
+   const from = Math.max(job.idx * chunkBytes, id3);
+   const end = job.idx * chunkBytes + chunkBytes;
+-  if (end <= from) return { bytes: new Uint8Array(0), offset: 0, span: 0 }; // this slice is all tag (cover art)
+-  let bytes = await read(from, end);
++  if (end <= from) return { bytes: new Uint8Array(0), offset: 0, span: 0, rel: true, exact: 0 }; // this slice is all tag (cover art)
++  let bytes = await read(from, end + 8); // a few bytes more, so the header of the frame that straddles the end can be read
++  let exact: number | undefined;
+   if (job.fmt === "adts") {
+     let i = 0;
+     while (i + 1 < bytes.length && !isAdts(bytes.subarray(i))) i++;
+     bytes = bytes.subarray(i);
+   } else {
+-    bytes = bytes.subarray(mp3Start(bytes)); // start on a whole frame so the decoder isn't confused
++    const first = mp3Start(bytes); // start on a whole frame so the decoder isn't confused
++    exact = mp3SliceSeconds(bytes, first, end - from) ?? undefined;
++    bytes = bytes.subarray(first, Math.max(first, end - from));
+   }
+   const audioBytes = job.sz && job.sz > id3 ? job.sz - id3 : row.chunks_total * chunkBytes;
+   const total = job.dur && job.dur > 0 ? job.dur : row.duration_sec > 0 ? row.duration_sec : (audioBytes * 8) / 128_000;
+   const at = (byte: number) => timeAtByteFraction(Math.min(1, (byte - id3) / audioBytes), total, job.toc);
+   const offset = at(from);
+   const span = Math.max(1, at(Math.min(end, id3 + audioBytes)) - offset);
+-  return { bytes, offset, span };
++  return { bytes, offset, span, rel: true, exact };
+ }
+ 
+ async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void> {
+   const idx = job.idx;
+-  const { bytes, offset, span: exactPerChunk } = await pieceOf(env, row, job);
++  const piece = await pieceOf(env, row, job);
++  const { bytes, rel } = piece;
++  const base = rel ? 0 : piece.offset; // rel slices keep times relative to their own start
++  const dur = Math.round((piece.exact ?? piece.span) * 1000) / 1000;
++  const store = (segs: Segment[]) => (rel ? JSON.stringify({ rel: 1, dur, segs }) : JSON.stringify(segs));
+ 
+   if (bytes.length < 2000) {
+-    // nothing to transcribe here (tag only)
+-    await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, '[]')").bind(row.ep_id, idx).run();
++    // nothing to transcribe here (tag only, or a few bytes at the very end)
++    await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, store([])).run();
+     return finishChunk(env, row);
+   }
+   const out: any = await runWhisper(env, bytesToBase64(bytes), job.lang);
+@@ -464,18 +497,16 @@ async function transcribeChunk(env: Env, row: Row, job: ChunkJob): Promise<void>
+   if (Array.isArray(out?.segments) && out.segments.length) {
+     for (const s of cleanSegments(out.segments)) {
+       const text = String(s.text ?? "").trim();
+-      if (text) segs.push({ start: offset + Number(s.start ?? 0), end: offset + Number(s.end ?? 0), text });
++      if (text) segs.push({ start: base + Number(s.start ?? 0), end: base + Number(s.end ?? 0), text });
+     }
+   } else if (typeof out?.text === "string" && out.text.trim()) {
+     // No timestamps from the model: split into sentences and spread them across the slice.
+     const parts = out.text.trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+-    const step = exactPerChunk / Math.max(1, parts.length);
+-    parts.forEach((text: string, i: number) => segs.push({ start: offset + i * step, end: offset + (i + 1) * step, text }));
++    const step = (piece.exact ?? piece.span) / Math.max(1, parts.length);
++    parts.forEach((text: string, i: number) => segs.push({ start: base + i * step, end: base + (i + 1) * step, text }));
+   }
+ 
+-  await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)")
+-    .bind(row.ep_id, idx, JSON.stringify(segs))
+-    .run();
++  await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, store(segs)).run();
+ 
+   return finishChunk(env, row);
+ }
+@@ -525,17 +556,32 @@ function cleanSegments(raw: any[]): any[] {
+   return out;
+ }
+ 
++/** What a stored slice holds: M4A slices are a plain array with absolute times; MP3/AAC slices are {rel, dur, segs}. */
++type Stored = Segment[] | { rel: 1; dur?: number; segs: Segment[]; skip?: string };
++
+ async function assemble(env: Env, epId: string) {
+   const rows = await env.DB.prepare("SELECT segments FROM transcript_chunks WHERE ep_id = ? ORDER BY idx").bind(epId).all<{ segments: string }>();
+   const lines: { t: number; text: string }[] = [];
++  const skipReasons: string[] = [];
++  const total = await env.DB.prepare("SELECT duration_sec, chunks_total FROM transcripts WHERE ep_id = ?").bind(epId).first<{ duration_sec: number; chunks_total: number }>();
++  const guess = total && total.duration_sec > 0 ? total.duration_sec / Math.max(1, total.chunks_total) : 65; // only used for a slice with no measured length
++  let acc = 0; // seconds of audio before the current slice
+   for (const r of rows.results) {
+-    for (const s of JSON.parse(r.segments) as Segment[]) if (s.text) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
++    const v = JSON.parse(r.segments) as Stored;
++    if (Array.isArray(v)) {
++      for (const s of v) {
++        if ((s as any).skip) skipReasons.push(String((s as any).skip));
++        if (s.text) lines.push({ t: Math.max(0, Math.round(s.start)), text: s.text });
++      }
++      continue;
++    }
++    if (v.skip) skipReasons.push(v.skip);
++    for (const s of v.segs) if (s.text) lines.push({ t: Math.max(0, Math.round(acc + s.start)), text: s.text });
++    acc += typeof v.dur === "number" && v.dur >= 0 ? v.dur : guess;
+   }
+-  const skippedRows = rows.results.filter((r) => r.segments.includes('"skip"'));
+-  const skipped = skippedRows.length;
++  const skipped = skipReasons.length;
+   if (skipped * 4 > rows.results.length) {
+-    const why = (JSON.parse(skippedRows[0].segments)[0]?.skip as string) || "unknown error";
+-    return fail(env, epId, `${skipped} of ${rows.results.length} parts couldn't be transcribed (${why})`);
++    return fail(env, epId, `${skipped} of ${rows.results.length} parts couldn't be transcribed (${skipReasons[0] || "unknown error"})`);
+   }
+   if (!lines.length) return fail(env, epId, "No speech was recognised in this episode");
+   const note = skipped ? `${skipped} short part${skipped > 1 ? "s" : ""} couldn't be transcribed and ${skipped > 1 ? "are" : "is"} missing.` : null;
+@@ -548,7 +594,7 @@ async function assemble(env: Env, epId: string) {
+ /** Queue consumer: one message is one slice of one episode. */
+ /** A slice that keeps failing is recorded as skipped, so one bad part doesn't lose the whole episode. */
+ async function skipChunk(env: Env, row: Row, idx: number, message: string): Promise<void> {
+-  const mark = JSON.stringify([{ start: 0, end: 0, text: "", skip: message.slice(0, 160) }]);
++  const mark = JSON.stringify({ rel: 1, skip: message.slice(0, 160), segs: [] }); // no measured length: assemble() substitutes an estimate
+   await env.DB.prepare("INSERT OR REPLACE INTO transcript_chunks (ep_id, idx, segments) VALUES (?, ?, ?)").bind(row.ep_id, idx, mark).run();
+   const done = await env.DB.prepare("SELECT COUNT(*) AS n FROM transcript_chunks WHERE ep_id = ?").bind(row.ep_id).first<{ n: number }>();
+   if ((done?.n ?? 0) >= row.chunks_total) await assemble(env, row.ep_id);
+diff --git a/backend/test/exact.ts b/backend/test/exact.ts
+new file mode 100644
+index 0000000..89428db
+--- /dev/null
++++ b/backend/test/exact.ts
+@@ -0,0 +1,71 @@
++// MP3 slice times must come from counting frames, not from bytes: in variable-bitrate audio bytes are not proportional to time.
++import { call, drain, files, finish, makeDb, makeEnv, ok, setAi, worker, queued } from "./harness";
++
++const { DB } = makeDb();
++const env = makeEnv(DB);
++env.MAX_PER_USER_PER_DAY = "100"; env.MAX_TRANSCRIPTS_PER_DAY = "100"; env.WHISPER_DAILY_MINUTES = "100000";
++const T = (await call(env, "POST", "/v1/users", "secret", { handle: "exact", name: "E" })).j.token;
++const CH = 65_536;
++
++// frame lengths at 44.1 kHz MPEG1 Layer III, by bitrate index (padding bit always 0)
++const BR: Record<number, [number, number]> = { 1: [32, 104], 5: [64, 208], 9: [128, 417], 11: [192, 626] };
++const keys = [1, 5, 9, 11];
++function vbr(frames: number, seed: number, id3 = 0) {
++  let x = seed;
++  const rnd = () => { x = (x * 1103515245 + 12345) & 0x7fffffff; return x; };
++  const starts: number[] = [];
++  const parts: Uint8Array[] = [];
++  let pos = id3;
++  const tag = new Uint8Array(id3);
++  if (id3) { const n = id3 - 10; tag.set([0x49, 0x44, 0x33, 3, 0, 0, (n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f]); tag.fill(0x55, 10); }
++  parts.push(tag);
++  // long stretches of one bitrate, so the bytes-per-second rate changes a lot across the file
++  let bi = 9, left = 0;
++  for (let i = 0; i < frames; i++) {
++    if (left-- <= 0) { bi = keys[rnd() % 4]; left = 200 + (rnd() % 600); }
++    const [, len] = BR[bi];
++    const f = new Uint8Array(len).fill(0x11);
++    f.set([0xff, 0xfb, bi << 4, 0x00]);
++    starts.push(pos); parts.push(f); pos += len;
++  }
++  const out = new Uint8Array(pos); let w = 0; for (const p of parts) { out.set(p, w); w += p.length; }
++  return { bytes: out, starts };
++}
++const FRAME_SEC = 1152 / 44100;
++
++async function check(name: string, id3: number) {
++  const { bytes, starts } = vbr(5000, 42 + id3, id3);
++  files.set(name, { bytes, type: "audio/mpeg" });
++  setAi(() => ({ segments: [{ start: 0, end: 1, text: " S." }] }));
++  // the feed says 9999 s, which is wrong, and the server must not depend on it
++  await call(env, "POST", "/v1/transcripts", T, { epId: name, audioUrl: "https://cdn.example.com/" + name, durationSec: 9999 });
++  // process the slices in a scrambled order, like a real queue
++  const jobs: any[] = []; while (queued.length) jobs.push(queued.shift());
++  jobs.sort((a, b) => ((a.body.idx * 7919) % 13) - ((b.body.idx * 7919) % 13));
++  for (const j of jobs) await worker.queue({ messages: [{ body: j.body, attempts: 1, ack() {}, retry() {} }] } as any, env);
++  const r = await call(env, "GET", "/v1/transcripts/" + name, T);
++  const lines = r.j.lines as { t: number }[];
++  let worst = 0, n = 0;
++  for (let k = 0; k * CH < bytes.length; k++) {
++    if (k * CH + CH <= id3) continue; // a slice that is only tag has no line
++    const startOfSlice = Math.max(k * CH, id3);
++    const before = starts.filter((s) => s < startOfSlice).length;
++    const want = Math.round(before * FRAME_SEC);
++    const got = lines[n++]?.t ?? -1000;
++    worst = Math.max(worst, Math.abs(got - want));
++  }
++  return { status: r.j.status, worst, lines: lines.length, total: Math.round(starts.length * FRAME_SEC), n };
++}
++
++let res = await check("vbr.mp3", 0);
++ok("VBR file: ready, one line per slice", res.status === "ready" && res.lines === res.n, res);
++ok("VBR file: every slice starts at its true time (within 1 s), however the slices were ordered", res.worst <= 1, res);
++res = await check("vbr-tag.mp3", 200_000);
++ok("VBR file with a big cover-art tag: still exact", res.status === "ready" && res.worst <= 1, res);
++
++// the old byte-fraction estimate would have been far off for this file
++const { bytes, starts } = vbr(5000, 42);
++const byteGuess = (CH * 5) / bytes.length * (starts.length * FRAME_SEC);
++const trueT = starts.filter((s) => s < CH * 5).length * FRAME_SEC;
++ok("(this file really is VBR: byte estimate is off by more than 5 s)", Math.abs(byteGuess - trueT) > 5, { byteGuess, trueT });
++finish();
+diff --git a/release/RELEASE-1.5.6.md b/release/RELEASE-1.5.6.md
+new file mode 100644
+index 0000000..c79749c
+--- /dev/null
++++ b/release/RELEASE-1.5.6.md
+@@ -0,0 +1,59 @@
++# Release 1.5.6: transcript timing that doesn't drift, playback speed, line highlighter
++
++## New in the app (Android release)
++
++- **Playback speed.** Tap the speed button in the full player, or the new **Speed** button on an episode page, to open a speed window: a slider from 0.5x to 3x in 0.05 steps, -0.05 / +0.05 buttons, and presets (0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3). The speed is remembered.
++- **Manual line highlighter (plain-text mode).** When Timings is off, or the transcript has no timestamps, tap a line to highlight it (same look as the playing line in timing mode: darker background and a red bar). Tap again to remove it. A **Clear highlights** chip appears when any are set. Highlights are kept on your phone per episode, separately for the original and pasted text. Pasting new text clears the pasted text's highlights, because the line numbers change. With Timings on and the transcript timed, tapping a line still jumps to it as before.
++
++## Backend: timing that doesn't drift
++
++**What was wrong.** The server cuts an episode into slices of about a minute and sends each to the speech model. It placed each slice on the timeline by guessing: "this slice starts X bytes into the file, so it starts at X/size of the episode's length". That is only right for constant-bitrate audio. Many podcasts are variable bitrate (quiet parts use fewer bytes), so a slice's real start time can be many seconds off, and the error grows differently for every slice. That is why a fix for the whole transcript (a constant shift) stops working after the first minute or two: the error isn't constant.
++
++**What changes.** For MP3 (and raw AAC) episodes, each slice now measures its own length by counting its audio frames, and the true start of every slice is the sum of the lengths of the slices before it (added up when the transcript is assembled, whatever order the slices finish in). Tested with a synthetic variable-bitrate file: every slice lands within 1 second of its true time, also when the file starts with a big cover-art tag, and when the slices finish out of order. M4A episodes were already exact. If a slice doesn't parse as MP3 the server falls back to the old estimate for that slice.
++
++**What this does not fix**
++- Transcripts that already exist keep their old timings. Press **Redo** on an episode (uses free Whisper time) to get the new timing, or fix it with Sync.
++- Episodes where the server's download differs from what your phone plays (dynamically inserted ads) can still be offset, and no timing method fixes that. Sync can fix a constant offset.
++- Invented lines (the model producing text over music or silence) are a different problem and are unchanged by this release.
++
++| Question | Answer |
++| --- | --- |
++| Database migration needed? | **No.** No tables or columns change. Do not run any migration step. The format of the temporary per-slice data changes, but it is deleted when each transcript finishes and the new code reads both old and new formats. (If you never deployed 1.5.4, the script will still list and apply `0004_transcript_timing.sql` first, after a backup and your `YES`; likewise 0003 if you never deployed 1.5.0.) |
++| Worker deployment needed? | **Yes.** |
++| Android release needed? | **Yes**, for speed and highlighter (app 1.5.6, versionCode 21). The timing fix itself is server-side and works with any app version. |
++| New secrets, bindings, dependencies? | None. `wrangler.toml` untouched. |
++
++## Steps
++
++Pick the patch that matches what you have applied (all bring you to 1.5.6):
++
++- `leestn-v1.5.6-from-1.5.5.patch`: you applied 1.5.5.
++- `leestn-v1.5.6-from-1.5.4.patch`: you stopped at 1.5.4.
++- `leestn-v1.5.6-from-1.0.patch`: you applied none of the 1.5.x patches (this one also includes the 1.5.x app changes).
++
++Check first (changes nothing), then apply (files on your PC only):
++
++    git apply --check <patch name>
++    git apply <patch name>
++
++`git status` must not list `backend/wrangler.toml`. Then:
++
++    powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
++
++The script checks `wrangler.toml` points at the real Worker `leestn-api`, database `leestn` and queue `leestn-transcribe`; runs the tests on your PC; lists waiting migrations (read-only; expect "No migrations to apply"); asks `YES`, then saves a full backup of the live database to `backups\`; does a dry run of the Worker; asks `YES`, then deploys the existing `leestn-api`; checks `/health` shows `1.5.6`.
++
++Save it in Git: `git add -A`, `git commit -m "1.5.6: exact MP3 timing, playback speed, line highlighter"`, `git push`. Then the app: `git tag v1.5.6`, `git push origin v1.5.6`; when the GitHub build finishes, open Settings → About → Check for updates on the phone.
++
++**Safe moment to deploy:** avoid deploying while a transcript is being generated. A slice already stored in the old format while others use the new one only affects that one transcript's timing, and Redo fixes it.
++
++## Rollback
++
++Code only: `npx wrangler rollback` in `backend`. No data changes in this release.
++
++## Risks
++
++- **The Android code has never been compiled by me.** The new speed window and highlighter are untested on a device; if the build fails, paste the error and I will fix it.
++
++- **Tested with synthetic MP3 files, not with a real podcast through the real Workers AI.** Please Redo one episode that had drifting timing and tell me whether it is now right, and where it is still off.
++- Counting frames assumes standard MP3 (MPEG audio Layer III). Anything else falls back to the old estimate.
++- The time between slices is exact only to about a frame (26 ms) per slice; over 100 slices a fraction of a second at most.
+diff --git a/release/release-backend.ps1 b/release/release-backend.ps1
+index 3678d0b..e6fd96c 100644
+--- a/release/release-backend.ps1
++++ b/release/release-backend.ps1
+@@ -157,4 +157,4 @@ try {
+ finally { Pop-Location }
+ 
+ Say 'Done'
+-Info 'If anything looks wrong, see release\RELEASE-1.5.5.md, section "If something goes wrong".'
++Info 'If anything looks wrong, see release\RELEASE-1.5.6.md, section "If something goes wrong".'

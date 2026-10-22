@@ -97,7 +97,7 @@ No new services. M4A transcription costs the same as MP3: about $0.0005 per audi
 
 ## Compatibility and risks
 
-- **App â†” Worker:** the API is identical (same routes, same responses). The only difference is that some M4A requests that used to be refused now succeed, and refusals for other formats name the format.
+- **App ↔ Worker:** the API is identical (same routes, same responses). The only difference is that some M4A requests that used to be refused now succeed, and refusals for other formats name the format.
 - **Queue messages already waiting** (old format) are still processed correctly by the new code (tested).
 - **Live Whisper with ADTS audio is untested.** The M4A pieces are standard AAC streams, which Whisper tooling normally decodes, but I could not confirm it against Workers AI. If it refuses them, the transcript ends as "failed" with a message after three tries; nothing else is affected.
 - **HE-AAC** (low-bitrate podcasts) is best effort. **Video podcasts** and non-AAC audio are refused.
