@@ -195,6 +195,7 @@ fun PersonAvatar(vm: AppViewModel, handle: String, name: String, avatarV: Long, 
 @Composable
 fun SectionHeader(title: String, action: String? = null, onAction: () -> Unit = {}, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.padding(end = 8.dp).width(4.dp).height(18.dp).clip(RoundedCornerShape(2.dp)).background(Brush.verticalGradient(listOf(LColors.Red, LColors.Side))))
         Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
         if (action != null) {
             Text(action, color = LColors.Red, style = MaterialTheme.typography.labelLarge, modifier = Modifier.clickable(onClick = onAction).padding(4.dp))
@@ -256,9 +257,9 @@ fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun PlayButton(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 36.dp, filled: Boolean = false, onClick: () -> Unit) {
+fun PlayButton(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 36.dp, filled: Boolean = false, container: Color = LColors.Red, onClick: () -> Unit) {
     Box(
-        modifier.size(size).clip(CircleShape).background(if (filled) LColors.Red else LColors.Surface3).pressable(onClick = onClick),
+        modifier.size(size).clip(CircleShape).background(if (filled) container else LColors.Surface3).pressable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Crossfade(playing, animationSpec = tween(Motion.Quick), label = "playIcon") { on ->

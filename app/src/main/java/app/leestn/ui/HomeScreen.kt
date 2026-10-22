@@ -7,6 +7,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -69,6 +77,7 @@ fun EpisodeCard(vm: AppViewModel, ep: Episode, onClick: () -> Unit) {
                 modifier = Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 7.dp, vertical = 3.dp),
                 color = Color.White, style = MaterialTheme.typography.labelSmall,
             )
+            if (vm.playing && vm.playingId == ep.id) Equalizer(true, Modifier.align(Alignment.TopEnd).padding(10.dp), color = Color.White, height = 14.dp)
             PlayButton(vm.playing && vm.playingId == ep.id, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp), size = 34.dp, filled = true, onClick = { vm.play(ep.id) })
         }
         Text(ep.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -94,6 +103,44 @@ fun UpNextCard(vm: AppViewModel, ep: Episode, sideCount: Int, onClick: () -> Uni
             if (sideCount > 0) "+$sideCount side first" else p.name,
             style = MaterialTheme.typography.bodySmall, color = if (sideCount > 0) LColors.Side else LColors.Text3, maxLines = 1,
         )
+    }
+}
+
+@Composable
+private fun ContinueCard(vm: AppViewModel, ep: Episode, openEp: (String) -> Unit) {
+    val p = showOf(ep.pid)
+    val tint = rememberArtTint(p.artworkUrl)
+    val secs = vm.prog[ep.id] ?: 0
+    val now = vm.playing && vm.playingId == ep.id
+    val shape = RoundedCornerShape(20.dp)
+    Row(
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape)
+            .background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.34f), LColors.Surface)))
+            .border(1.dp, tint.copy(alpha = 0.28f), shape)
+            .pressable { openEp(ep.id) }.padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Poster(p, Modifier.width(64.dp).glow(tint, 14.dp, if (now) 0.5f else 0.2f), corner = 10.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("${p.name} · ${ep.code}".uppercase(), style = MaterialTheme.typography.labelSmall, color = LColors.Text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(ep.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (ep.seconds > 0) {
+                GlowBar(secs / ep.seconds.toFloat(), color = tint)
+                Text("${Dates.clock(secs)} of ${Dates.clock(ep.seconds)}", style = MaterialTheme.typography.labelSmall, color = LColors.Text2)
+            } else {
+                Text("${Dates.clock(secs)} in", style = MaterialTheme.typography.labelSmall, color = LColors.Text2)
+            }
+        }
+        Row(
+            Modifier.clip(RoundedCornerShape(99.dp)).background(lerp(tint, Color.Black, 0.25f)).pressable { if (now) vm.togglePlay() else vm.play(ep.id) }.padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (now) Equalizer(true, color = Color.White, height = 14.dp) else Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            Text(if (now) "Pause" else "Resume", color = Color.White, style = MaterialTheme.typography.labelLarge)
+        }
+        IconButton(onClick = { vm.removeFromContinue(ep.id) }, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Rounded.Close, "Remove from Continue listening", tint = LColors.Text2, modifier = Modifier.size(18.dp))
+        }
     }
 }
 
@@ -130,10 +177,24 @@ fun HomeScreen(
     val feed = vm.feedItems.take(3)
     val nothing = vm.subs.isEmpty() && vm.log.isEmpty() && continuing.isEmpty()
 
-    LazyColumn(contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+    val listState = rememberLazyListState()
+    val ambient = rememberArtTint(continuing.firstOrNull()?.let { showOf(it.pid).artworkUrl } ?: "")
+    val hour = remember { java.time.LocalTime.now().hour }
+    Box(Modifier.fillMaxSize()) {
+    // a glow in the colour of what you were last listening to, fading as you scroll
+    Box(
+        Modifier.fillMaxWidth().height(340.dp)
+            .graphicsLayer { alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 600f).coerceIn(0f, 1f) }
+            .background(Brush.verticalGradient(listOf(ambient.copy(alpha = 0.32f), Color.Transparent))),
+    )
+    LazyColumn(state = listState, contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
         item(key = "title") {
-            Row(Modifier.padding(horizontal = 16.dp).appear(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp).appear(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 LeestnLogo()
+                Column(Modifier.appear(1), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(greeting(hour), style = MaterialTheme.typography.displaySmall)
+                    Text(if (continuing.isNotEmpty()) "Pick up where you left off." else "What are we listening to?", style = MaterialTheme.typography.bodyMedium, color = LColors.Text2)
+                }
             }
         }
         item(key = "update") { UpdateBanner(vm, openSettings = openSettings) }
@@ -158,36 +219,7 @@ fun HomeScreen(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Continue listening")
-                    continuing.forEach { ep ->
-                        val p = showOf(ep.pid)
-                        val secs = vm.prog[ep.id] ?: 0
-                        Row(
-                            Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).clickable { openEp(ep.id) }.padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Poster(p, Modifier.width(64.dp), corner = 10.dp)
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("${p.name} · ${ep.code}".uppercase(), style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(ep.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                if (ep.seconds > 0) {
-                                    ThinBar(secs / ep.seconds.toFloat())
-                                    Text("${Dates.clock(secs)} of ${Dates.clock(ep.seconds)}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
-                                } else {
-                                    Text("${Dates.clock(secs)} in", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
-                                }
-                            }
-                            Row(
-                                Modifier.clip(RoundedCornerShape(99.dp)).background(LColors.Red).pressable { vm.play(ep.id) }.padding(horizontal = 14.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                Text("Resume", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                            }
-                            IconButton(onClick = { vm.removeFromContinue(ep.id) }, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Rounded.Close, "Remove from Continue listening", tint = LColors.Text3, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
+                    continuing.forEach { ep -> ContinueCard(vm, ep, openEp) }
                 }
             }
         }
@@ -247,5 +279,6 @@ fun HomeScreen(
                 feed.forEach { FeedItem(vm, it, openItem = openItem, openPerson = openPerson) }
             }
         }
+    }
     }
 }

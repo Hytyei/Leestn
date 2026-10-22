@@ -2,7 +2,13 @@ package app.leestn.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -23,6 +29,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -154,6 +161,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
         return
     }
     val p = showOf(ep.pid)
+    val epTint = rememberArtTint(p.artworkUrl)
     val entry = vm.log[epId]
     val isCurrent = vm.playingId == epId
     val tx = vm.transcripts[epId]
@@ -189,13 +197,21 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
         if (follow && q.isEmpty() && activeIdx >= 0 && vm.playing && isCurrent) listState.animateScrollToItem(TX_START + activeIdx)
     }
 
+    Box(Modifier.fillMaxSize()) {
+    // colour from the cover washes over the top and fades away as you scroll
+    Box(
+        Modifier.fillMaxWidth().height(360.dp)
+            .graphicsLayer { alpha = if (listState.firstVisibleItemIndex > 1) 0f else (1f - listState.firstVisibleItemScrollOffset / 700f).coerceIn(0f, 1f) }
+            .background(Brush.verticalGradient(listOf(epTint.copy(alpha = 0.38f), Color.Transparent))),
+    )
     LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
         item { Column(Modifier.padding(bottom = 14.dp)) { // 0
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
         } }
         item { Column(Modifier.padding(bottom = 14.dp).appear()) { // 1
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Poster(p, Modifier.width(104.dp).pressable { openShow(p.id) }, corner = 14.dp)
+                val artPop by animateFloatAsState(if (vm.playing && isCurrent) 1f else 0.94f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "epArt")
+                Poster(p, Modifier.width(104.dp).graphicsLayer { scaleX = artPop; scaleY = artPop }.glow(epTint, 20.dp, if (vm.playing && isCurrent) 0.5f else 0.25f).pressable { openShow(p.id) }, corner = 14.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         CodeChip(ep)
@@ -391,11 +407,15 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                     val bg by animateColorAsState(if (active || chosen || marked) LColors.Surface2 else Color.Transparent, tween(Motion.Normal), label = "txBg")
                     val bar by animateColorAsState(if (chosen) LColors.Side else if (active || marked) LColors.Red else Color.Transparent, tween(Motion.Normal), label = "txBar")
                     val a by animateFloatAsState(if (active || marked) 1f else if (past) 0.45f else 0.85f, tween(Motion.Normal), label = "txAlpha")
+                    val glowA by animateFloatAsState(if (active) 1f else 0f, tween(Motion.Slow), label = "txGlow")
+                    val pop by animateFloatAsState(if (active) 1.025f else 1f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow), label = "txPop")
                     Row(
                         Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(IntrinsicSize.Min)
+                            .graphicsLayer { scaleX = pop; scaleY = pop; transformOrigin = TransformOrigin(0f, 0.5f) }
                             .alpha(a)
                             .clip(RoundedCornerShape(12.dp))
                             .background(bg)
+                            .drawBehind { drawRect(Brush.horizontalGradient(listOf(epTint.copy(alpha = 0.28f * glowA), Color.Transparent))) }
                             .clickable(enabled = line.t >= 0 || (syncMode && vm.showTimings) || plainMode) {
                                 if (syncMode && vm.showTimings) selLine = if (selLine == i) -1 else i
                                 else if (plainMode) vm.toggleHighlight(epId, txSourceKey, i)
@@ -433,6 +453,8 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                 }
             }
         }
+    }
+
     }
 
     if (speedDialog) SpeedDialog(vm) { speedDialog = false }

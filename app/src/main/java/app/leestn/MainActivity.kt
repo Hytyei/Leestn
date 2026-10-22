@@ -28,6 +28,7 @@ import app.leestn.ui.Motion
 import app.leestn.ui.BadgeToast
 import app.leestn.ui.BadgesScreen
 import app.leestn.ui.MiniPlayer
+import app.leestn.ui.NavIcon
 import app.leestn.ui.NowPlayingSheet
 import app.leestn.ui.OnboardingScreen
 import app.leestn.ui.SettingsScreen
@@ -242,7 +243,7 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
                             NavigationBarItem(
                                 selected = selected == t.route,
                                 onClick = { goTab(t.route) },
-                                icon = { Icon(t.icon, t.label) },
+                                icon = { NavIcon(t.icon, t.label, selected == t.route) },
                                 label = { Text(t.label, style = MaterialTheme.typography.labelSmall) },
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = LColors.Red, selectedTextColor = LColors.Red,
