@@ -153,8 +153,15 @@ try {
     Info "Live Worker says: name=$($h.name) version=$($h.version)"
     if ($h.version -ne $want) { Warn "Expected version $want. The live Worker may still be updating; run the health check again in a minute." }
     else { Info "Matches this release ($want)." }
+
+    # -----------------------------------------------------------------------------------------------
+    Say '8. Check the founder badge (read-only: only looks, changes nothing)'
+    $f = Capture { npx wrangler d1 execute $ExpectedDbName --remote --command "SELECT handle, role FROM users WHERE role = 'founder'" }
+    Write-Host $f
+    if ($f -notmatch '(?i)hytyei') { Warn 'No account named Hytyei has the founder badge on this database. If you have not created that account yet, the badge can be added later (see RELEASE-1.5.9.md).' }
+    else { Info 'Founder badge is set for Hytyei.' }
 }
 finally { Pop-Location }
 
 Say 'Done'
-Info 'If anything looks wrong, see release\RELEASE-1.5.6.md, section "If something goes wrong".'
+Info 'If anything looks wrong, see release\RELEASE-1.5.9.md, section "If something goes wrong".'

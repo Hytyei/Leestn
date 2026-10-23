@@ -51,6 +51,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -214,6 +216,8 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
 
     Scaffold(
         containerColor = LColors.Bg,
+        // the status bar space is handled by each screen, so Home can paint right up behind it
+        contentWindowInsets = WindowInsets.navigationBars,
         bottomBar = {
             AnimatedVisibility(
                 visible = !inRecap,
@@ -257,7 +261,7 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
             }
         },
     ) { pad ->
-        Box(Modifier.fillMaxSize().padding(pad).let { if (inRecap) it else it.statusBarsPadding() }) {
+        Box(Modifier.fillMaxSize().padding(pad).let { if (inRecap || route == "home") it else it.statusBarsPadding() }) {
             AnimatedContent(
                 targetState = route,
                 transitionSpec = {

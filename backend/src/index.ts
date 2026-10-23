@@ -1,6 +1,7 @@
 import type { ChunkJob, Env } from "./types";
 import { HttpError, cors, json } from "./util";
 import { consume, getTranscript, getUsage, putTiming, requestTranscript } from "./transcripts";
+import { authConfig, googleAuth, linkGoogle, unlinkGoogle } from "./google";
 import {
   createUser, deleteAvatar, deleteMe, feed, follow, getAvatar, me, patchMe, profile, pull, push, putAvatar, searchUsers, showRatings, wrapped,
 } from "./users";
@@ -11,13 +12,19 @@ async function route(req: Request, env: Env): Promise<Response> {
   const m = req.method;
   let r: RegExpMatchArray | null;
 
-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.6" });
+  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.9" });
 
   // Transcripts (invite key or account token)
   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
   if (p === "/v1/transcripts" && m === "POST") return requestTranscript(env, req);
   if ((r = p.match(/^\/v1\/transcripts\/(.+)\/timing$/)) && m === "PUT") return putTiming(env, req, decodeURIComponent(r[1]));
   if ((r = p.match(/^\/v1\/transcripts\/(.+)$/)) && m === "GET") return getTranscript(env, req, decodeURIComponent(r[1]));
+
+  // Google sign-in
+  if (p === "/v1/auth/config" && m === "GET") return authConfig(env);
+  if (p === "/v1/auth/google" && m === "POST") return googleAuth(env, req);
+  if (p === "/v1/me/google" && m === "POST") return linkGoogle(env, req);
+  if (p === "/v1/me/google" && m === "DELETE") return unlinkGoogle(env, req);
 
   // Accounts
   if (p === "/v1/users" && m === "POST") return createUser(env, req);

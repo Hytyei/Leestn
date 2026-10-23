@@ -8,6 +8,8 @@ export interface Env {
   MAX_PER_USER_PER_DAY: string;
   CHUNK_BYTES: string;
   WHISPER_DAILY_MINUTES?: string;
+  /** Public id of the Google sign-in client (`wrangler secret put GOOGLE_CLIENT_ID`). Without it Google sign-in is off. */
+  GOOGLE_CLIENT_ID?: string;
   MAX_AUDIO_MB: string;
   ALLOW_ORIGIN: string;
 }

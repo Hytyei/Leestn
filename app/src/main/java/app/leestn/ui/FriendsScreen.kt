@@ -65,6 +65,7 @@ fun FeedItem(vm: AppViewModel, e: RFeedItem, openItem: (RFeedItem) -> Unit, open
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(buildAnnotatedString {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(e.name.ifBlank { e.handle }) }
+                if (e.role == "founder") withStyle(SpanStyle(color = FounderGold, fontWeight = FontWeight.Bold)) { append(" ✔") }
                 append(if (e.rating != null) " rated an episode ${e.rating}/10" else " listened to an episode")
             }, style = MaterialTheme.typography.bodyMedium)
             Row(
@@ -91,7 +92,10 @@ private fun PersonRow(vm: AppViewModel, f: RPerson, openPerson: (String) -> Unit
     ) {
         PersonAvatar(vm, f.handle, f.name, f.avatarV, 42.dp)
         Column(Modifier.weight(1f)) {
-            Text(f.name.ifBlank { f.handle }, style = MaterialTheme.typography.titleSmall)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(f.name.ifBlank { f.handle }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f, fill = false))
+                FounderBadge(f.role, size = 15.dp)
+            }
             Text("@" + f.handle + (if (f.bio.isNotBlank()) " · " + f.bio else ""), style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Chip(if (f.following) "Following" else "Follow", !f.following) { vm.toggleFollow(f.handle) }

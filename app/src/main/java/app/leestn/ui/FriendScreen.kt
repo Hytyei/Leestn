@@ -63,7 +63,11 @@ fun FriendScreen(
                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     PersonAvatar(vm, pr.handle, pr.name, pr.avatarV, 76.dp)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(pr.name.ifBlank { pr.handle }, style = MaterialTheme.typography.headlineMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(pr.name.ifBlank { pr.handle }, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f, fill = false))
+                            FounderBadge(pr.role, size = 24.dp)
+                        }
+                        FounderTag(pr.role)
                         Text("@${pr.handle}  ·  ${pr.followers} follower${if (pr.followers == 1) "" else "s"}  ·  ${pr.following} following", style = MaterialTheme.typography.labelMedium, color = LColors.Text3)
                         if (pr.bio.isNotBlank()) Text(pr.bio, style = MaterialTheme.typography.bodyMedium, color = LColors.Text2)
                     }

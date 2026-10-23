@@ -10,13 +10,46 @@ export interface User {
   badges: string;
   avatar_v: number;
   created_at: number;
+  google_sub: string | null;
+  google_email: string | null;
+  role: string;
 }
 
-const COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at";
+export const USER_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, google_sub, google_email, role";
+const COLS = USER_COLS;
+const OLD_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, NULL AS google_sub, NULL AS google_email, '' AS role";
+
+/** Reads a user. If the 0005 migration has not been applied yet, falls back to the old columns so nobody is locked out. */
+async function loadUser(env: Env, tail: string, ...args: unknown[]): Promise<User | null> {
+  try {
+    return await env.DB.prepare(`SELECT ${COLS} FROM users ${tail}`).bind(...args).first<User>();
+  } catch (e) {
+    if (!/no such (column|table)/i.test(String((e as Error)?.message))) throw e;
+    return env.DB.prepare(`SELECT ${OLD_COLS} FROM users ${tail}`).bind(...args).first<User>();
+  }
+}
 
 export async function userByToken(env: Env, token: string): Promise<User | null> {
   if (!token) return null;
-  return env.DB.prepare(`SELECT ${COLS} FROM users WHERE token_hash = ?`).bind(await sha256Hex(token)).first<User>();
+  const h = await sha256Hex(token);
+  const u = await loadUser(env, "WHERE token_hash = ?", h);
+  if (u) return u;
+  // an extra token made by signing in with Google on another device
+  try {
+    return await loadUser(env, "WHERE id = (SELECT user_id FROM user_tokens WHERE token_hash = ?)", h);
+  } catch {
+    return null; // table not there yet: the migration is pending
+  }
+}
+
+/** A new token for another device. Only its hash is stored, and each account keeps its 20 newest. */
+export async function issueToken(env: Env, userId: string): Promise<string> {
+  const token = randomToken();
+  await env.DB.prepare("INSERT INTO user_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)").bind(await sha256Hex(token), userId, Date.now()).run();
+  await env.DB.prepare(
+    "DELETE FROM user_tokens WHERE user_id = ? AND token_hash NOT IN (SELECT token_hash FROM user_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT 20)",
+  ).bind(userId, userId).run();
+  return token;
 }
 
 export async function authed(env: Env, req: Request): Promise<User> {
@@ -45,10 +78,12 @@ const pub = (u: User) => ({
   badges: JSON.parse(u.badges),
   avatarV: u.avatar_v,
   createdAt: u.created_at,
+  role: u.role || "",
 });
+export const pubUser = pub;
 
 async function byHandle(env: Env, handle: string): Promise<User> {
-  const u = await env.DB.prepare(`SELECT ${COLS} FROM users WHERE handle = ?`).bind(handle.toLowerCase()).first<User>();
+  const u = await loadUser(env, "WHERE handle = ?", handle.toLowerCase());
   if (!u) throw new HttpError(404, "No such user");
   return u;
 }
@@ -71,11 +106,12 @@ export async function createUser(env: Env, req: Request): Promise<Response> {
     throw new HttpError(409, "That handle is taken");
   }
   // The token is shown once. Only its hash is stored.
-  return json(env, { user: { id, handle, name, bio, genres, badges: [], avatarV: 0, createdAt: Date.now() }, token }, 201);
+  return json(env, { user: { id, handle, name, bio, genres, badges: [], avatarV: 0, createdAt: Date.now(), role: "" }, token }, 201);
 }
 
 export async function me(env: Env, req: Request): Promise<Response> {
-  return json(env, pub(await authed(env, req)));
+  const u = await authed(env, req);
+  return json(env, { ...pub(u), google: !!u.google_sub, googleEmail: u.google_email || "" });
 }
 
 export async function patchMe(env: Env, req: Request): Promise<Response> {
@@ -99,6 +135,7 @@ export async function deleteMe(env: Env, req: Request): Promise<Response> {
     env.DB.prepare("DELETE FROM show_ratings WHERE user_id=?").bind(u.id),
     env.DB.prepare("DELETE FROM events WHERE user_id=?").bind(u.id),
     env.DB.prepare("DELETE FROM follows WHERE follower_id=? OR followee_id=?").bind(u.id, u.id),
+    env.DB.prepare("DELETE FROM user_tokens WHERE user_id=?").bind(u.id),
     env.DB.prepare("DELETE FROM users WHERE id=?").bind(u.id),
   ]);
   return json(env, { ok: true });
@@ -259,25 +296,25 @@ export async function searchUsers(env: Env, req: Request): Promise<Response> {
   const q = (new URL(req.url).searchParams.get("q") || "").trim().toLowerCase().replace(/^@/, "").replace(/[%_]/g, "");
   const like = `%${q}%`;
   const rows = await env.DB.prepare(
-    `SELECT us.handle, us.name, us.avatar_v, us.bio,
+    `SELECT us.handle, us.name, us.avatar_v, us.bio, us.role,
             EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = us.id) AS following
        FROM users us WHERE us.id != ? AND (? = '' OR us.handle LIKE ? OR lower(us.name) LIKE ?)
       ORDER BY following DESC, us.created_at DESC LIMIT 40`,
   ).bind(u.id, u.id, q, like, like).all<any>();
-  return json(env, { users: rows.results.map((r) => ({ handle: r.handle, name: r.name, bio: r.bio, avatarV: r.avatar_v, following: !!r.following })) });
+  return json(env, { users: rows.results.map((r) => ({ handle: r.handle, name: r.name, bio: r.bio, avatarV: r.avatar_v, role: r.role || "", following: !!r.following })) });
 }
 
 export async function feed(env: Env, req: Request): Promise<Response> {
   const u = await authed(env, req);
   const before = int(new URL(req.url).searchParams.get("before"), Date.now() + 1);
   const rows = await env.DB.prepare(
-    `SELECT e.id, e.type, e.payload, e.created_at, us.handle, us.name, us.avatar_v
+    `SELECT e.id, e.type, e.payload, e.created_at, us.handle, us.name, us.avatar_v, us.role
        FROM events e JOIN follows f ON f.followee_id = e.user_id AND f.follower_id = ?
        JOIN users us ON us.id = e.user_id
       WHERE e.created_at < ? ORDER BY e.created_at DESC LIMIT 50`,
   ).bind(u.id, before).all<any>();
   return json(env, {
-    items: rows.results.map((r) => ({ id: r.id, type: r.type, at: r.created_at, user: { handle: r.handle, name: r.name, avatarV: r.avatar_v }, ...JSON.parse(r.payload) })),
+    items: rows.results.map((r) => ({ id: r.id, type: r.type, at: r.created_at, user: { handle: r.handle, name: r.name, avatarV: r.avatar_v, role: r.role || "" }, ...JSON.parse(r.payload) })),
   });
 }
 

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -104,13 +105,22 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
         else -> p.eps.sortedBy { it.date }
     }
 
-    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val tint = rememberArtTint(p.artworkUrl)
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.drawBehind {
+            val a = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 700f).coerceIn(0f, 1f)
+            drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(tint.copy(alpha = 0.40f * a), androidx.compose.ui.graphics.Color.Transparent), endY = 380.dp.toPx()))
+        },
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
         item(key = "back") {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
         }
         item(key = "head") {
             Row(Modifier.padding(horizontal = 16.dp).appear(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Poster(p, Modifier.width(128.dp), showName = true, corner = 16.dp)
+                Poster(p, Modifier.width(128.dp).glow(tint, 22.dp, 0.4f), showName = true, corner = 16.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("${p.genre.ifBlank { "Podcast" }.uppercase()}${if (p.host.isNotBlank()) " · " + p.host.uppercase() else ""}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.headlineMedium)

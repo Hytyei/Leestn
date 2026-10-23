@@ -23,8 +23,8 @@ android {
         applicationId = "app.leestn"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "1.5.7"
+        versionCode = 24
+        versionName = "1.5.9"
     }
 
     signingConfigs {
@@ -76,5 +76,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play)
+    implementation(libs.google.id)
     debugImplementation(libs.androidx.ui.tooling)
 }

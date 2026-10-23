@@ -82,7 +82,7 @@ fun MiniPlayer(vm: AppViewModel, meta: NowMeta, onOpen: () -> Unit) {
     val tint = rememberArtTint(poster.artworkUrl)
     val btn = lerp(tint, Color.Black, 0.25f)
     val artScale by animateFloatAsState(if (vm.playing) 1f else 0.9f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "miniArt")
-    Column(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.30f), LColors.Surface))).clickable(onClick = onOpen)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 6.dp, bottom = 4.dp).clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.40f), LColors.Surface2))).clickable(onClick = onOpen)) {
         GlowBar(frac, color = tint, height = 2.dp, animate = false)
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Poster(poster, Modifier.width(40.dp).graphicsLayer { scaleX = artScale; scaleY = artScale }, corner = 8.dp)

@@ -90,7 +90,11 @@ fun ProfileScreen(
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.clickable(onClick = openEditProfile)) { MyAvatar(vm, 76.dp) }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(vm.displayName, style = MaterialTheme.typography.headlineMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(vm.displayName, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f, fill = false))
+                            FounderBadge(vm.myRole, size = 24.dp)
+                        }
+                        FounderTag(vm.myRole)
                         Text(
                             if (vm.connected) "@${vm.serverHandle}" else "Only on this device",
                             style = MaterialTheme.typography.labelMedium, color = LColors.Text3,
@@ -180,14 +184,19 @@ fun ProfileScreen(
             item {
                 Panel("Top shows") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        st.pods.take(5).forEach { x ->
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row {
-                                    Text(showOf(x.pid).name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    vm.showAverage(x.pid)?.let { RatingChip(it.first, Modifier.padding(end = 8.dp)) }
-                                    Text(Dates.hours(x.min), style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+                        st.pods.take(5).forEachIndexed { rank, x ->
+                            val tintX = rememberArtTint(showOf(x.pid).artworkUrl)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("${rank + 1}", style = MaterialTheme.typography.headlineSmall, color = if (rank == 0) LColors.Red else LColors.Text3, modifier = Modifier.width(26.dp))
+                                Poster(showOf(x.pid), Modifier.width(42.dp), corner = 8.dp)
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(showOf(x.pid).name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        vm.showAverage(x.pid)?.let { RatingChip(it.first, Modifier.padding(end = 8.dp)) }
+                                        Text(Dates.hours(x.min), style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+                                    }
+                                    GlowBar(x.min / st.pods.first().min.toFloat(), color = tintX, height = 4.dp)
                                 }
-                                ThinBar(x.min / st.pods.first().min.toFloat())
                             }
                         }
                     }

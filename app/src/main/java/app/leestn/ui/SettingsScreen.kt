@@ -42,6 +42,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.leestn.data.Catalog
@@ -204,6 +207,19 @@ private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: Stri
     )
 }
 
+/** White "Continue with Google" button. Plain text mark, so it works without any extra image. */
+@Composable
+private fun GoogleButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(99.dp)
+    Row(
+        Modifier.clip(shape).background(if (enabled) Color.White else Color.White.copy(alpha = 0.35f)).pressable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+        Text(label, color = Color(0xFF1F1F1F), style = MaterialTheme.typography.labelLarge)
+    }
+}
+
 /** Join a friend's server with a code, or connect to a server you host yourself. */
 @Composable
 private fun ServerSection(vm: AppViewModel) {
@@ -215,6 +231,7 @@ private fun ServerSection(vm: AppViewModel) {
     var shown by rememberSaveable { mutableStateOf(vm.profileName) }
     var confirmLeave by remember { mutableStateOf(false) }
     val busy = vm.serverBusy
+    val context = LocalContext.current
 
     Section("Friends and transcripts") {
         if (vm.connected) {
@@ -225,6 +242,18 @@ private fun ServerSection(vm: AppViewModel) {
             )
             UsageMeter(vm)
             InviteCard(vm)
+            HorizontalDivider(color = LColors.Line)
+            Text("Google account", style = MaterialTheme.typography.titleSmall)
+            if (vm.googleEmail.isNotBlank()) {
+                Text("Linked to ${vm.googleEmail}. You can sign in to this account with Google on any phone.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
+                ActionPill("Disconnect Google", Icons.Rounded.Close) { vm.unlinkGoogle() }
+            } else {
+                Text(
+                    "Connect your Google account to this one, so you can sign back in on a new phone without anything else. Your username, ratings and log stay exactly as they are.",
+                    style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
+                )
+                if (busy !is Load.Busy) GoogleButton("Connect Google account") { vm.linkGoogle(context) }
+            }
             if (busy is Load.Failed) Text(busy.message, color = LColors.Red, style = MaterialTheme.typography.bodySmall)
             if (busy is Load.Busy) Spinner(Modifier.fillMaxWidth())
             HorizontalDivider(color = LColors.Line)
@@ -262,6 +291,17 @@ private fun ServerSection(vm: AppViewModel) {
                 if (mode == "join") {
                     if (parsed != null) vm.connectServer(parsed.first, parsed.second, handle, shown)
                 } else vm.connectServer(url, inviteKey, handle, shown)
+            }
+            if (busy !is Load.Busy) {
+                Text(
+                    "Or use Google. New here? Choose a username above first. Already linked your Google account? Just tap the button, no username needed.",
+                    style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
+                )
+                val ready = if (mode == "join") parsed != null else url.isNotBlank()
+                GoogleButton("Continue with Google", enabled = ready) {
+                    if (mode == "join") parsed?.let { vm.googleConnect(context, it.first, it.second, handle, shown) }
+                    else vm.googleConnect(context, url, inviteKey, handle, shown)
+                }
             }
         }
     }

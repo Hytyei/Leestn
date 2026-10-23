@@ -1,0 +1,1214 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 519a0fa..71a827e 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -23,8 +23,8 @@ android {
+         applicationId = "app.leestn"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 23
+-        versionName = "1.5.8"
++        versionCode = 24
++        versionName = "1.5.9"
+     }
+ 
+     signingConfigs {
+@@ -76,5 +76,8 @@ dependencies {
+     implementation(libs.okhttp)
+     implementation(libs.media3.exoplayer)
+     implementation(libs.media3.session)
++    implementation(libs.androidx.credentials)
++    implementation(libs.androidx.credentials.play)
++    implementation(libs.google.id)
+     debugImplementation(libs.androidx.ui.tooling)
+ }
+diff --git a/app/src/main/java/app/leestn/data/GoogleSignIn.kt b/app/src/main/java/app/leestn/data/GoogleSignIn.kt
+new file mode 100644
+index 0000000..dced3fc
+--- /dev/null
++++ b/app/src/main/java/app/leestn/data/GoogleSignIn.kt
+@@ -0,0 +1,52 @@
++package app.leestn.data
++
++import android.app.Activity
++import android.content.Context
++import android.content.ContextWrapper
++import androidx.credentials.CredentialManager
++import androidx.credentials.CustomCredential
++import androidx.credentials.GetCredentialRequest
++import androidx.credentials.exceptions.GetCredentialCancellationException
++import androidx.credentials.exceptions.GetCredentialException
++import androidx.credentials.exceptions.NoCredentialException
++import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
++import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
++import java.io.IOException
++
++/** Shows Google's account picker and returns a Google ID token that the Leestn server can check. */
++object GoogleSignIn {
++    private fun activityOf(ctx: Context): Activity? {
++        var c: Context? = ctx
++        while (c is ContextWrapper) {
++            if (c is Activity) return c
++            c = c.baseContext
++        }
++        return null
++    }
++
++    /** [serverClientId] is the Web client id the Leestn server was set up with. */
++    suspend fun idToken(ctx: Context, serverClientId: String): String {
++        val activity = activityOf(ctx) ?: throw IOException("Couldn't open Google sign-in from here")
++        val request = GetCredentialRequest.Builder()
++            .addCredentialOption(GetSignInWithGoogleOption.Builder(serverClientId).build())
++            .build()
++        val result = try {
++            CredentialManager.create(activity).getCredential(activity, request)
++        } catch (e: GetCredentialCancellationException) {
++            throw IOException("Google sign-in was cancelled")
++        } catch (e: NoCredentialException) {
++            throw IOException("No Google account is available on this phone. Add one in the phone's settings and try again.")
++        } catch (e: GetCredentialException) {
++            throw IOException("Google sign-in failed: " + (e.message ?: e.type) + ". If this keeps happening, the app's Google setup may be incomplete (see the README).")
++        }
++        val cred = result.credential
++        if (cred is CustomCredential && cred.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
++            return try {
++                GoogleIdTokenCredential.createFrom(cred.data).idToken
++            } catch (e: Exception) {
++                throw IOException("Google sign-in returned something unexpected")
++            }
++        }
++        throw IOException("Google sign-in returned something unexpected")
++    }
++}
+diff --git a/app/src/main/java/app/leestn/data/Server.kt b/app/src/main/java/app/leestn/data/Server.kt
+index 5b2b629..f48735c 100644
+--- a/app/src/main/java/app/leestn/data/Server.kt
++++ b/app/src/main/java/app/leestn/data/Server.kt
+@@ -12,13 +12,22 @@ import java.net.URLEncoder
+ 
+ /** One person on a Leestn server. */
+ data class Usage(val limitMin: Int, val usedMin: Double, val remainingMin: Double, val resetsAt: Long)
+-data class RPerson(val handle: String, val name: String, val bio: String, val avatarV: Long, val following: Boolean)
++data class RPerson(val handle: String, val name: String, val bio: String, val avatarV: Long, val following: Boolean, val role: String = "")
++
++/** Own account details, including the linked Google email (empty when none). */
++data class RMe(val handle: String, val name: String, val role: String, val googleEmail: String)
++
++/** Result of signing in or up with Google. */
++data class GoogleResult(val token: String, val handle: String, val name: String, val created: Boolean)
++
++/** The server has no account for this Google login and wants a username. */
++class NeedsHandle(message: String) : IOException(message)
+ 
+ /** One thing a followed person listened to. */
+ data class RFeedItem(
+     val id: Long, val at: Long, val handle: String, val name: String, val avatarV: Long,
+     val epId: String, val epTitle: String, val showId: String, val showName: String, val showArt: String, val feedUrl: String,
+-    val rating: Int?, val listenedAt: String,
++    val rating: Int?, val listenedAt: String, val role: String = "",
+ ) {
+     val key: String get() = "$handle:$epId"
+ }
+@@ -33,6 +42,7 @@ data class RProfile(
+     val followers: Int, val following: Int, val isFollowing: Boolean, val isMe: Boolean,
+     val episodes: Int, val hours: Double, val avgRating: Double?,
+     val topShows: List<RShow>, val recent: List<RRecent>, val showRatings: List<RShowRating>, val badges: List<RBadge>,
++    val role: String = "",
+ )
+ 
+ /** What everyone on the server thinks of a show. */
+@@ -82,6 +92,7 @@ object Server {
+             val text = resp.body?.string().orEmpty()
+             if (!resp.isSuccessful) {
+                 val msg = try { JSONObject(text).optString("error") } catch (e: Exception) { "" }
++                if (resp.code == 404 && try { JSONObject(text).optBoolean("needsHandle") } catch (e: Exception) { false }) throw NeedsHandle(msg)
+                 throw IOException(msg.ifBlank { "Server error ${resp.code}" })
+             }
+             return if (text.isBlank()) JSONObject() else JSONObject(text)
+@@ -99,6 +110,35 @@ object Server {
+         return j.getString("token")
+     }
+ 
++    /** The Google client id this server uses for sign-in, or empty when Google sign-in is not set up there. Needs no login. */
++    fun googleClientId(base: String): String = call("GET", base, "", "/v1/auth/config").optString("googleClientId")
++
++    /**
++     * Sign in with a Google ID token. If the Google account is linked already, signs in. Otherwise, with a [handle] and the
++     * server's [inviteKey], creates an account. Throws [NeedsHandle] when it needs a username first.
++     */
++    fun googleAuth(base: String, inviteKey: String, idToken: String, handle: String, name: String): GoogleResult {
++        val body = JSONObject().put("idToken", idToken)
++        if (handle.isNotBlank()) body.put("handle", handle)
++        if (name.isNotBlank()) body.put("name", name)
++        val j = call("POST", base, inviteKey, "/v1/auth/google", body)
++        val u = j.getJSONObject("user")
++        return GoogleResult(j.getString("token"), u.getString("handle"), u.optString("name"), j.optBoolean("created"))
++    }
++
++    /** Link a Google account to the signed-in account. Returns the Google email. */
++    fun linkGoogle(base: String, token: String, idToken: String): String =
++        call("POST", base, token, "/v1/me/google", JSONObject().put("idToken", idToken)).optString("googleEmail")
++
++    fun unlinkGoogle(base: String, token: String) {
++        call("DELETE", base, token, "/v1/me/google")
++    }
++
++    fun account(base: String, token: String): RMe {
++        val j = call("GET", base, token, "/v1/me")
++        return RMe(j.getString("handle"), j.optString("name"), j.optString("role"), j.optString("googleEmail"))
++    }
++
+     fun patchMe(base: String, token: String, name: String, bio: String) {
+         call("PATCH", base, token, "/v1/me", JSONObject().put("name", name).put("bio", bio))
+     }
+@@ -116,7 +156,7 @@ object Server {
+     /** Own account: handle, name, bio, avatar version. */
+     fun me(base: String, token: String): RPerson {
+         val j = call("GET", base, token, "/v1/me")
+-        return RPerson(j.getString("handle"), j.optString("name"), j.optString("bio"), j.optLong("avatarV"), false)
++        return RPerson(j.getString("handle"), j.optString("name"), j.optString("bio"), j.optLong("avatarV"), false, j.optString("role"))
+     }
+ 
+     /** Today's free Whisper allowance on the server. Read-only. */
+@@ -138,7 +178,7 @@ object Server {
+         val a = j.optJSONArray("users") ?: return emptyList()
+         return (0 until a.length()).mapNotNull { i ->
+             val o = a.optJSONObject(i) ?: return@mapNotNull null
+-            RPerson(o.getString("handle"), o.optString("name"), o.optString("bio"), o.optLong("avatarV"), o.optBoolean("following"))
++            RPerson(o.getString("handle"), o.optString("name"), o.optString("bio"), o.optLong("avatarV"), o.optBoolean("following"), o.optString("role"))
+         }
+     }
+ 
+@@ -156,7 +196,7 @@ object Server {
+             RFeedItem(
+                 o.optLong("id"), o.optLong("at"), u.optString("handle"), u.optString("name"), u.optLong("avatarV"),
+                 o.optString("epId"), o.optString("epTitle"), o.optString("showId"), o.optString("showName"), o.optString("showArt"),
+-                o.optString("feedUrl"), optInt(o, "rating"), o.optString("listenedAt"),
++                o.optString("feedUrl"), optInt(o, "rating"), o.optString("listenedAt"), u.optString("role"),
+             )
+         }
+     }
+@@ -195,7 +235,7 @@ object Server {
+         return RProfile(
+             j.optString("handle"), j.optString("name"), j.optString("bio"), j.optLong("avatarV"),
+             j.optInt("followers"), j.optInt("following"), j.optBoolean("isFollowing"), j.optBoolean("isMe"),
+-            st.optInt("episodes"), st.optDouble("hours", 0.0), optDbl(st, "avgRating"), tops, recent, rated, badges,
++            st.optInt("episodes"), st.optDouble("hours", 0.0), optDbl(st, "avgRating"), tops, recent, rated, badges, j.optString("role"),
+         )
+     }
+ 
+diff --git a/app/src/main/java/app/leestn/state/AppViewModel.kt b/app/src/main/java/app/leestn/state/AppViewModel.kt
+index 853b2b1..c5b133f 100644
+--- a/app/src/main/java/app/leestn/state/AppViewModel.kt
++++ b/app/src/main/java/app/leestn/state/AppViewModel.kt
+@@ -26,6 +26,8 @@ import androidx.media3.session.SessionToken
+ import app.leestn.PlaybackService
+ import app.leestn.data.AvatarImage
+ import app.leestn.data.Backend
++import app.leestn.data.GoogleSignIn
++import app.leestn.data.NeedsHandle
+ import app.leestn.data.GroupRatings
+ import app.leestn.data.RFeedItem
+ import app.leestn.data.RPerson
+@@ -128,6 +130,12 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+     var serverKey by mutableStateOf(prefs.getString("serverKey", "") ?: "")
+         private set
+     var serverHandle by mutableStateOf(prefs.getString("serverHandle", "") ?: "")
++    /** The Google account linked to this Leestn account (its email), empty when none. */
++    var googleEmail by mutableStateOf(prefs.getString("googleEmail", "") ?: "")
++        private set
++    /** "founder" shows a verified badge next to your name. Set on the server only. */
++    var myRole by mutableStateOf(prefs.getString("myRole", "") ?: "")
++        private set
+         private set
+     var serverBusy by mutableStateOf<Load>(Load.Idle)
+         private set
+@@ -441,6 +449,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+             stubs.keys.toList().forEach { ensureShow(it) }
+             publishWidgets()
+             if (connected && (dirtyEps.isNotEmpty() || dirtyShows.isNotEmpty())) scheduleSync(1500)
++            if (connected) refreshAccount()
+         }
+         connect()
+         viewModelScope.launch {
+@@ -1037,20 +1046,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+         viewModelScope.launch {
+             try {
+                 val token = withContext(Dispatchers.IO) { Server.join(base, key, h, shown, profileBio) }
+-                serverUrl = base; serverToken = token; serverKey = key; serverHandle = h; profileName = shown
+-                prefs.edit().putString("serverUrl", base).putString("serverToken", token).putString("serverKey", key)
+-                    .putString("serverHandle", h).putString("profileName", shown).apply()
+-                log.keys.forEach { dirtyEps[it] = 1 }
+-                showRatings.keys.forEach { dirtyShows[it] = 1 }
+-                persistDirty()
+-                serverBusy = Load.Done
+-                avatarFile?.let { f ->
+-                    try { withContext(Dispatchers.IO) { Server.putAvatar(base, token, f.readBytes()) } } catch (e: Exception) { /* uploaded next time the photo changes */ }
+-                }
+-                transcripts.clear()
+-                scheduleSync(300)
+-                loadFeed(force = true)
+-                searchPeople("")
++                adoptAccount(base, token, key, h, shown)
+             } catch (e: kotlinx.coroutines.CancellationException) {
+                 throw e
+             } catch (e: Throwable) {
+@@ -1059,6 +1055,117 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+         }
+     }
+ 
++    /** Remember a freshly created or signed-in account on this device and start syncing. */
++    private suspend fun adoptAccount(base: String, token: String, key: String, handle: String, shown: String) {
++        serverUrl = base; serverToken = token; serverKey = key; serverHandle = handle; profileName = shown
++        prefs.edit().putString("serverUrl", base).putString("serverToken", token).putString("serverKey", key)
++            .putString("serverHandle", handle).putString("profileName", shown).apply()
++        log.keys.forEach { dirtyEps[it] = 1 }
++        showRatings.keys.forEach { dirtyShows[it] = 1 }
++        persistDirty()
++        serverBusy = Load.Done
++        avatarFile?.let { f ->
++            try { withContext(Dispatchers.IO) { Server.putAvatar(base, token, f.readBytes()) } } catch (e: Exception) { /* uploaded next time the photo changes */ }
++        }
++        transcripts.clear()
++        refreshAccount()
++        scheduleSync(300)
++        loadFeed(force = true)
++        searchPeople("")
++    }
++
++    /** Sign in (or, with a username, sign up) with Google. [context] must be the screen's activity. */
++    fun googleConnect(context: android.content.Context, url: String, inviteKey: String, handle: String, name: String) {
++        val base = url.trim().trimEnd('/')
++        val h = handle.trim().lowercase().removePrefix("@")
++        val key = inviteKey.trim()
++        if (!base.startsWith("https://")) { serverBusy = Load.Failed("The server address must start with https://"); return }
++        if (h.isNotEmpty() && !Regex("[a-z0-9_]{3,30}").matches(h)) { serverBusy = Load.Failed("Your username needs 3 to 30 letters, numbers or underscores"); return }
++        serverBusy = Load.Busy
++        viewModelScope.launch {
++            try {
++                val clientId = withContext(Dispatchers.IO) { Server.googleClientId(base) }
++                if (clientId.isBlank()) {
++                    serverBusy = Load.Failed("Google sign-in isn't set up on this server yet. Whoever runs it needs to add the Google client ID (see the README).")
++                    return@launch
++                }
++                val idToken = GoogleSignIn.idToken(context, clientId)
++                val res = withContext(Dispatchers.IO) { Server.googleAuth(base, key, idToken, h, name.trim().ifBlank { profileName }) }
++                adoptAccount(base, res.token, key, res.handle, res.name.ifBlank { res.handle })
++            } catch (e: kotlinx.coroutines.CancellationException) {
++                throw e
++            } catch (e: NeedsHandle) {
++                serverBusy = Load.Failed("No Leestn account is linked to this Google account yet. Type a username above, then tap Continue with Google again.")
++            } catch (e: Throwable) {
++                serverBusy = Load.Failed(e.message ?: "Couldn't sign in with Google")
++            }
++        }
++    }
++
++    /** Connect a Google account to the account you are signed in with. */
++    fun linkGoogle(context: android.content.Context) {
++        if (!connected) return
++        val base = serverUrl
++        val tok = serverToken
++        serverBusy = Load.Busy
++        viewModelScope.launch {
++            try {
++                val clientId = withContext(Dispatchers.IO) { Server.googleClientId(base) }
++                if (clientId.isBlank()) {
++                    serverBusy = Load.Failed("Google sign-in isn't set up on this server yet. Whoever runs it needs to add the Google client ID (see the README).")
++                    return@launch
++                }
++                val idToken = GoogleSignIn.idToken(context, clientId)
++                val email = withContext(Dispatchers.IO) { Server.linkGoogle(base, tok, idToken) }
++                googleEmail = email
++                prefs.edit().putString("googleEmail", email).apply()
++                serverBusy = Load.Done
++            } catch (e: kotlinx.coroutines.CancellationException) {
++                throw e
++            } catch (e: Throwable) {
++                serverBusy = Load.Failed(e.message ?: "Couldn't connect Google")
++            }
++        }
++    }
++
++    fun unlinkGoogle() {
++        if (!connected) return
++        val base = serverUrl
++        val tok = serverToken
++        serverBusy = Load.Busy
++        viewModelScope.launch {
++            try {
++                withContext(Dispatchers.IO) { Server.unlinkGoogle(base, tok) }
++                googleEmail = ""
++                prefs.edit().putString("googleEmail", "").apply()
++                serverBusy = Load.Done
++            } catch (e: kotlinx.coroutines.CancellationException) {
++                throw e
++            } catch (e: Throwable) {
++                serverBusy = Load.Failed(e.message ?: "Couldn't disconnect Google")
++            }
++        }
++    }
++
++    /** Reads your role (founder badge) and linked Google email from the server. Quiet when offline. */
++    fun refreshAccount() {
++        if (!connected) return
++        val base = serverUrl
++        val tok = serverToken
++        viewModelScope.launch {
++            try {
++                val me = withContext(Dispatchers.IO) { Server.account(base, tok) }
++                myRole = me.role
++                googleEmail = me.googleEmail
++                prefs.edit().putString("myRole", me.role).putString("googleEmail", me.googleEmail).apply()
++            } catch (e: kotlinx.coroutines.CancellationException) {
++                throw e
++            } catch (e: Throwable) {
++                // not important enough to show an error
++            }
++        }
++    }
++
+     /** Delete the account on the server, then forget the server on this device. */
+     fun leaveServer() {
+         val base = serverUrl
+@@ -1073,11 +1180,11 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+                 serverBusy = Load.Failed("Couldn't reach the server to delete your account here (${e.message}). Try again when you are online.")
+                 return@launch
+             }
+-            serverUrl = ""; serverToken = ""; serverKey = ""; serverHandle = ""
++            serverUrl = ""; serverToken = ""; serverKey = ""; serverHandle = ""; googleEmail = ""; myRole = ""
+             dirtyEps.clear(); dirtyShows.clear()
+             feedItems = emptyList(); people = emptyList(); profiles.clear(); group.clear(); transcripts.clear()
+             feedLoad = Load.Idle; peopleLoad = Load.Idle
+-            prefs.edit().remove("serverUrl").remove("serverToken").remove("serverKey").remove("serverHandle").remove("dirtyEps").remove("dirtyShows").apply()
++            prefs.edit().remove("serverUrl").remove("serverToken").remove("serverKey").remove("serverHandle").remove("googleEmail").remove("myRole").remove("dirtyEps").remove("dirtyShows").apply()
+             serverBusy = Load.Idle
+         }
+     }
+diff --git a/app/src/main/java/app/leestn/ui/FriendScreen.kt b/app/src/main/java/app/leestn/ui/FriendScreen.kt
+index 75c3299..4c99a8e 100644
+--- a/app/src/main/java/app/leestn/ui/FriendScreen.kt
++++ b/app/src/main/java/app/leestn/ui/FriendScreen.kt
+@@ -63,7 +63,11 @@ fun FriendScreen(
+                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                     PersonAvatar(vm, pr.handle, pr.name, pr.avatarV, 76.dp)
+                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+-                        Text(pr.name.ifBlank { pr.handle }, style = MaterialTheme.typography.headlineMedium)
++                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
++                            Text(pr.name.ifBlank { pr.handle }, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f, fill = false))
++                            FounderBadge(pr.role, size = 24.dp)
++                        }
++                        FounderTag(pr.role)
+                         Text("@${pr.handle}  ·  ${pr.followers} follower${if (pr.followers == 1) "" else "s"}  ·  ${pr.following} following", style = MaterialTheme.typography.labelMedium, color = LColors.Text3)
+                         if (pr.bio.isNotBlank()) Text(pr.bio, style = MaterialTheme.typography.bodyMedium, color = LColors.Text2)
+                     }
+diff --git a/app/src/main/java/app/leestn/ui/FriendsScreen.kt b/app/src/main/java/app/leestn/ui/FriendsScreen.kt
+index 59d727d..73c7734 100644
+--- a/app/src/main/java/app/leestn/ui/FriendsScreen.kt
++++ b/app/src/main/java/app/leestn/ui/FriendsScreen.kt
+@@ -65,6 +65,7 @@ fun FeedItem(vm: AppViewModel, e: RFeedItem, openItem: (RFeedItem) -> Unit, open
+         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+             Text(buildAnnotatedString {
+                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(e.name.ifBlank { e.handle }) }
++                if (e.role == "founder") withStyle(SpanStyle(color = FounderGold, fontWeight = FontWeight.Bold)) { append(" ✔") }
+                 append(if (e.rating != null) " rated an episode ${e.rating}/10" else " listened to an episode")
+             }, style = MaterialTheme.typography.bodyMedium)
+             Row(
+@@ -91,7 +92,10 @@ private fun PersonRow(vm: AppViewModel, f: RPerson, openPerson: (String) -> Unit
+     ) {
+         PersonAvatar(vm, f.handle, f.name, f.avatarV, 42.dp)
+         Column(Modifier.weight(1f)) {
+-            Text(f.name.ifBlank { f.handle }, style = MaterialTheme.typography.titleSmall)
++            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
++                Text(f.name.ifBlank { f.handle }, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f, fill = false))
++                FounderBadge(f.role, size = 15.dp)
++            }
+             Text("@" + f.handle + (if (f.bio.isNotBlank()) " · " + f.bio else ""), style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+         }
+         Chip(if (f.following) "Following" else "Follow", !f.following) { vm.toggleFollow(f.handle) }
+diff --git a/app/src/main/java/app/leestn/ui/ProfileScreen.kt b/app/src/main/java/app/leestn/ui/ProfileScreen.kt
+index cd08cc7..1aad4fa 100644
+--- a/app/src/main/java/app/leestn/ui/ProfileScreen.kt
++++ b/app/src/main/java/app/leestn/ui/ProfileScreen.kt
+@@ -90,7 +90,11 @@ fun ProfileScreen(
+                 Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                     Box(Modifier.clickable(onClick = openEditProfile)) { MyAvatar(vm, 76.dp) }
+                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+-                        Text(vm.displayName, style = MaterialTheme.typography.headlineMedium)
++                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
++                            Text(vm.displayName, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f, fill = false))
++                            FounderBadge(vm.myRole, size = 24.dp)
++                        }
++                        FounderTag(vm.myRole)
+                         Text(
+                             if (vm.connected) "@${vm.serverHandle}" else "Only on this device",
+                             style = MaterialTheme.typography.labelMedium, color = LColors.Text3,
+diff --git a/app/src/main/java/app/leestn/ui/SettingsScreen.kt b/app/src/main/java/app/leestn/ui/SettingsScreen.kt
+index a23f217..742bc31 100644
+--- a/app/src/main/java/app/leestn/ui/SettingsScreen.kt
++++ b/app/src/main/java/app/leestn/ui/SettingsScreen.kt
+@@ -42,6 +42,9 @@ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.sp
+ import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.dp
+ import app.leestn.data.Catalog
+@@ -204,6 +207,19 @@ private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: Stri
+     )
+ }
+ 
++/** White "Continue with Google" button. Plain text mark, so it works without any extra image. */
++@Composable
++private fun GoogleButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
++    val shape = RoundedCornerShape(99.dp)
++    Row(
++        Modifier.clip(shape).background(if (enabled) Color.White else Color.White.copy(alpha = 0.35f)).pressable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
++        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
++    ) {
++        Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
++        Text(label, color = Color(0xFF1F1F1F), style = MaterialTheme.typography.labelLarge)
++    }
++}
++
+ /** Join a friend's server with a code, or connect to a server you host yourself. */
+ @Composable
+ private fun ServerSection(vm: AppViewModel) {
+@@ -215,6 +231,7 @@ private fun ServerSection(vm: AppViewModel) {
+     var shown by rememberSaveable { mutableStateOf(vm.profileName) }
+     var confirmLeave by remember { mutableStateOf(false) }
+     val busy = vm.serverBusy
++    val context = LocalContext.current
+ 
+     Section("Friends and transcripts") {
+         if (vm.connected) {
+@@ -225,6 +242,18 @@ private fun ServerSection(vm: AppViewModel) {
+             )
+             UsageMeter(vm)
+             InviteCard(vm)
++            HorizontalDivider(color = LColors.Line)
++            Text("Google account", style = MaterialTheme.typography.titleSmall)
++            if (vm.googleEmail.isNotBlank()) {
++                Text("Linked to ${vm.googleEmail}. You can sign in to this account with Google on any phone.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
++                ActionPill("Disconnect Google", Icons.Rounded.Close) { vm.unlinkGoogle() }
++            } else {
++                Text(
++                    "Connect your Google account to this one, so you can sign back in on a new phone without anything else. Your username, ratings and log stay exactly as they are.",
++                    style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
++                )
++                if (busy !is Load.Busy) GoogleButton("Connect Google account") { vm.linkGoogle(context) }
++            }
+             if (busy is Load.Failed) Text(busy.message, color = LColors.Red, style = MaterialTheme.typography.bodySmall)
+             if (busy is Load.Busy) Spinner(Modifier.fillMaxWidth())
+             HorizontalDivider(color = LColors.Line)
+@@ -263,6 +292,17 @@ private fun ServerSection(vm: AppViewModel) {
+                     if (parsed != null) vm.connectServer(parsed.first, parsed.second, handle, shown)
+                 } else vm.connectServer(url, inviteKey, handle, shown)
+             }
++            if (busy !is Load.Busy) {
++                Text(
++                    "Or use Google. New here? Choose a username above first. Already linked your Google account? Just tap the button, no username needed.",
++                    style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
++                )
++                val ready = if (mode == "join") parsed != null else url.isNotBlank()
++                GoogleButton("Continue with Google", enabled = ready) {
++                    if (mode == "join") parsed?.let { vm.googleConnect(context, it.first, it.second, handle, shown) }
++                    else vm.googleConnect(context, url, inviteKey, handle, shown)
++                }
++            }
+         }
+     }
+ }
+diff --git a/app/src/main/java/app/leestn/ui/Verified.kt b/app/src/main/java/app/leestn/ui/Verified.kt
+new file mode 100644
+index 0000000..ccf468a
+--- /dev/null
++++ b/app/src/main/java/app/leestn/ui/Verified.kt
+@@ -0,0 +1,42 @@
++package app.leestn.ui
++
++import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.rounded.Verified
++import androidx.compose.material3.Icon
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++
++val FounderGold = Color(0xFFFFC043)
++
++/** Gold verified check shown after the name of the founder. Draws nothing for anyone else. */
++@Composable
++fun FounderBadge(role: String, modifier: Modifier = Modifier, size: Dp = 18.dp) {
++    if (role != "founder") return
++    Icon(Icons.Rounded.Verified, "Verified founder", tint = FounderGold, modifier = modifier.size(size))
++}
++
++/** "Verified founder" pill for profile headers. */
++@Composable
++fun FounderTag(role: String, modifier: Modifier = Modifier) {
++    if (role != "founder") return
++    Row(
++        modifier.clip(RoundedCornerShape(99.dp)).background(FounderGold.copy(alpha = 0.16f)).padding(horizontal = 9.dp, vertical = 4.dp),
++        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
++    ) {
++        Icon(Icons.Rounded.Verified, null, tint = FounderGold, modifier = Modifier.size(14.dp))
++        Text("VERIFIED FOUNDER", style = MaterialTheme.typography.labelSmall, color = FounderGold)
++    }
++}
+diff --git a/backend/migrations/0005_google_and_founder.sql b/backend/migrations/0005_google_and_founder.sql
+new file mode 100644
+index 0000000..19f447f
+--- /dev/null
++++ b/backend/migrations/0005_google_and_founder.sql
+@@ -0,0 +1,20 @@
++-- Sign in with Google, several devices per account, and the founder badge. Additive only: nothing is dropped or rewritten
++-- except the one `role` value set for the founder at the end.
++
++-- A Google account can be linked to one Leestn account (and one Leestn account to one Google account).
++ALTER TABLE users ADD COLUMN google_sub TEXT;
++ALTER TABLE users ADD COLUMN google_email TEXT;
++CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users (google_sub) WHERE google_sub IS NOT NULL;
++
++-- 'founder' shows a verified badge next to the name. Empty for everybody else.
++ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT '';
++
++-- Signing in with Google on a new device creates an extra token. The original token in users.token_hash keeps working.
++CREATE TABLE IF NOT EXISTS user_tokens (
++  token_hash TEXT PRIMARY KEY,
++  user_id    TEXT NOT NULL,
++  created_at INTEGER NOT NULL
++);
++CREATE INDEX IF NOT EXISTS idx_user_tokens_user ON user_tokens (user_id);
++
++UPDATE users SET role = 'founder' WHERE lower(handle) = 'hytyei';
+diff --git a/backend/package.json b/backend/package.json
+index 7f53f6c..8fbecf9 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "leestn-api",
+-  "version": "1.5.6",
++  "version": "1.5.9",
+   "private": true,
+   "type": "module",
+   "scripts": {
+@@ -10,7 +10,7 @@
+     "db:migrate:local": "wrangler d1 migrations apply leestn --local",
+     "db:migrate:remote": "wrangler d1 migrations apply leestn --remote",
+     "tail": "wrangler tail",
+-    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts && bun run test/timing.ts && bun run test/exact.ts"
++    "test": "bun run test/e2e.ts && bun run test/m4a.ts && bun run test/usage.ts && bun run test/resilience.ts && bun run test/quality.ts && bun run test/timing.ts && bun run test/exact.ts && bun run test/google.ts"
+   },
+   "devDependencies": {
+     "@cloudflare/workers-types": "^4.20250214.0",
+diff --git a/backend/src/google.ts b/backend/src/google.ts
+new file mode 100644
+index 0000000..56e7879
+--- /dev/null
++++ b/backend/src/google.ts
+@@ -0,0 +1,119 @@
++import type { Env } from "./types";
++import { HttpError, bearer, body, json, randomToken, safeEqual, sha256Hex, str } from "./util";
++import { authed, issueToken, pubUser, USER_COLS, type User } from "./users";
++
++// Sign in with Google. The app gets a Google ID token on the phone and sends it here. We check Google's signature,
++// that the token was made for this server's Google client (GOOGLE_CLIENT_ID), and that it has not expired.
++// No Google secret is needed: only the public client id, and the signing keys Google publishes.
++
++const CERTS = "https://www.googleapis.com/oauth2/v3/certs";
++let cache: { keys: any[]; at: number } | null = null;
++
++function b64u(s: string): Uint8Array {
++  const p = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
++  const bin = atob(p);
++  const out = new Uint8Array(new ArrayBuffer(bin.length));
++  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
++  return out;
++}
++
++async function googleKeys(force = false): Promise<any[]> {
++  if (!force && cache && Date.now() - cache.at < 3_600_000) return cache.keys;
++  const res = await fetch(CERTS);
++  if (!res.ok) throw new HttpError(502, "Couldn't reach Google to check the sign-in");
++  const j = (await res.json()) as { keys?: any[] };
++  cache = { keys: j.keys || [], at: Date.now() };
++  return cache.keys;
++}
++
++export interface GoogleIdentity {
++  sub: string;
++  email: string;
++  name: string;
++}
++
++export async function verifyGoogleToken(env: Env, idToken: string): Promise<GoogleIdentity> {
++  if (!env.GOOGLE_CLIENT_ID) throw new HttpError(501, "Google sign-in isn't set up on this server yet");
++  const parts = idToken.split(".");
++  if (parts.length !== 3) throw new HttpError(401, "That Google sign-in isn't valid");
++  let header: any, payload: any;
++  try {
++    header = JSON.parse(new TextDecoder().decode(b64u(parts[0])));
++    payload = JSON.parse(new TextDecoder().decode(b64u(parts[1])));
++  } catch {
++    throw new HttpError(401, "That Google sign-in isn't valid");
++  }
++  if (header.alg !== "RS256" || !header.kid) throw new HttpError(401, "That Google sign-in isn't valid");
++  let jwk = (await googleKeys()).find((k) => k.kid === header.kid);
++  if (!jwk) jwk = (await googleKeys(true)).find((k) => k.kid === header.kid);
++  if (!jwk) throw new HttpError(401, "That Google sign-in isn't valid");
++  const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
++  const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64u(parts[2]) as unknown as BufferSource, new TextEncoder().encode(parts[0] + "." + parts[1]));
++  if (!ok) throw new HttpError(401, "That Google sign-in isn't valid");
++  if (payload.iss !== "accounts.google.com" && payload.iss !== "https://accounts.google.com") throw new HttpError(401, "That Google sign-in isn't valid");
++  if (payload.aud !== env.GOOGLE_CLIENT_ID) throw new HttpError(401, "That Google sign-in was made for a different app");
++  if (typeof payload.exp !== "number" || payload.exp * 1000 < Date.now() - 60_000) throw new HttpError(401, "That Google sign-in has expired. Try again.");
++  if (typeof payload.sub !== "string" || !payload.sub) throw new HttpError(401, "That Google sign-in isn't valid");
++  if (payload.email_verified !== true && payload.email_verified !== "true") throw new HttpError(403, "Your Google email isn't verified");
++  return { sub: payload.sub, email: str(payload.email, 200), name: str(payload.name, 60) };
++}
++
++/** What the app needs to start Google sign-in. The client id is public. */
++export async function authConfig(env: Env): Promise<Response> {
++  return json(env, { google: !!env.GOOGLE_CLIENT_ID, googleClientId: env.GOOGLE_CLIENT_ID || "" });
++}
++
++const SELECT_BY_SUB = `SELECT ${USER_COLS} FROM users WHERE google_sub = ?`;
++
++/**
++ * Sign in or sign up with Google.
++ * - A Google account that is already linked: signs in (a new token for this device). No invite key needed.
++ * - Otherwise, with a handle and the server's invite key: creates the account.
++ * - Otherwise: answers 404 with needsHandle so the app can ask for a username.
++ */
++export async function googleAuth(env: Env, req: Request): Promise<Response> {
++  const b = await body(req);
++  const id = await verifyGoogleToken(env, str(b.idToken, 6000));
++  const existing = await env.DB.prepare(SELECT_BY_SUB).bind(id.sub).first<User>();
++  if (existing) {
++    const token = await issueToken(env, existing.id);
++    return json(env, { user: pubUser(existing), token, created: false });
++  }
++  const handle = str(b.handle, 30).trim().toLowerCase().replace(/^@/, "");
++  if (!handle) return json(env, { error: "No Leestn account is linked to this Google account yet. Choose a username to create one.", needsHandle: true }, 404);
++  if (!env.INVITE_KEY) throw new HttpError(500, "This server has no INVITE_KEY yet");
++  if (!safeEqual(bearer(req), env.INVITE_KEY)) throw new HttpError(401, "Missing or wrong invite key");
++  if (!/^[a-z0-9_]{3,30}$/.test(handle)) throw new HttpError(400, "Handle must be 3 to 30 letters, numbers or underscores");
++  const name = str(b.name, 60).trim() || id.name || handle;
++  const bio = str(b.bio, 300);
++  const token = randomToken();
++  const uid = crypto.randomUUID();
++  try {
++    await env.DB.prepare(
++      "INSERT INTO users (id, handle, name, bio, genres, token_hash, created_at, google_sub, google_email) VALUES (?, ?, ?, ?, '[]', ?, ?, ?, ?)",
++    ).bind(uid, handle, name, bio, await sha256Hex(token), Date.now(), id.sub, id.email).run();
++  } catch {
++    throw new HttpError(409, "That handle is taken");
++  }
++  const u = await env.DB.prepare(SELECT_BY_SUB).bind(id.sub).first<User>();
++  return json(env, { user: pubUser(u!), token, created: true }, 201);
++}
++
++/** Link the Google account to the signed-in Leestn account. */
++export async function linkGoogle(env: Env, req: Request): Promise<Response> {
++  const u = await authed(env, req);
++  const b = await body(req);
++  const id = await verifyGoogleToken(env, str(b.idToken, 6000));
++  const other = await env.DB.prepare("SELECT id FROM users WHERE google_sub = ?").bind(id.sub).first<{ id: string }>();
++  if (other && other.id !== u.id) throw new HttpError(409, "That Google account is already linked to another Leestn account");
++  if (u.google_sub && u.google_sub !== id.sub) throw new HttpError(409, "This account is already linked to a different Google account. Disconnect it first.");
++  await env.DB.prepare("UPDATE users SET google_sub=?, google_email=? WHERE id=?").bind(id.sub, id.email, u.id).run();
++  return json(env, { ok: true, googleEmail: id.email });
++}
++
++/** Unlink Google. The account and the device's token keep working. */
++export async function unlinkGoogle(env: Env, req: Request): Promise<Response> {
++  const u = await authed(env, req);
++  await env.DB.prepare("UPDATE users SET google_sub=NULL, google_email=NULL WHERE id=?").bind(u.id).run();
++  return json(env, { ok: true });
++}
+diff --git a/backend/src/index.ts b/backend/src/index.ts
+index 44b024c..edaa215 100644
+--- a/backend/src/index.ts
++++ b/backend/src/index.ts
+@@ -1,6 +1,7 @@
+ import type { ChunkJob, Env } from "./types";
+ import { HttpError, cors, json } from "./util";
+ import { consume, getTranscript, getUsage, putTiming, requestTranscript } from "./transcripts";
++import { authConfig, googleAuth, linkGoogle, unlinkGoogle } from "./google";
+ import {
+   createUser, deleteAvatar, deleteMe, feed, follow, getAvatar, me, patchMe, profile, pull, push, putAvatar, searchUsers, showRatings, wrapped,
+ } from "./users";
+@@ -11,7 +12,7 @@ async function route(req: Request, env: Env): Promise<Response> {
+   const m = req.method;
+   let r: RegExpMatchArray | null;
+ 
+-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.6" });
++  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.9" });
+ 
+   // Transcripts (invite key or account token)
+   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
+@@ -19,6 +20,12 @@ async function route(req: Request, env: Env): Promise<Response> {
+   if ((r = p.match(/^\/v1\/transcripts\/(.+)\/timing$/)) && m === "PUT") return putTiming(env, req, decodeURIComponent(r[1]));
+   if ((r = p.match(/^\/v1\/transcripts\/(.+)$/)) && m === "GET") return getTranscript(env, req, decodeURIComponent(r[1]));
+ 
++  // Google sign-in
++  if (p === "/v1/auth/config" && m === "GET") return authConfig(env);
++  if (p === "/v1/auth/google" && m === "POST") return googleAuth(env, req);
++  if (p === "/v1/me/google" && m === "POST") return linkGoogle(env, req);
++  if (p === "/v1/me/google" && m === "DELETE") return unlinkGoogle(env, req);
++
+   // Accounts
+   if (p === "/v1/users" && m === "POST") return createUser(env, req);
+   if (p === "/v1/users" && m === "GET") return searchUsers(env, req);
+diff --git a/backend/src/types.ts b/backend/src/types.ts
+index 8e5d264..3951e13 100644
+--- a/backend/src/types.ts
++++ b/backend/src/types.ts
+@@ -8,6 +8,8 @@ export interface Env {
+   MAX_PER_USER_PER_DAY: string;
+   CHUNK_BYTES: string;
+   WHISPER_DAILY_MINUTES?: string;
++  /** Public id of the Google sign-in client (`wrangler secret put GOOGLE_CLIENT_ID`). Without it Google sign-in is off. */
++  GOOGLE_CLIENT_ID?: string;
+   MAX_AUDIO_MB: string;
+   ALLOW_ORIGIN: string;
+ }
+diff --git a/backend/src/users.ts b/backend/src/users.ts
+index 6b9cc72..1f47b3d 100644
+--- a/backend/src/users.ts
++++ b/backend/src/users.ts
+@@ -10,13 +10,46 @@ export interface User {
+   badges: string;
+   avatar_v: number;
+   created_at: number;
++  google_sub: string | null;
++  google_email: string | null;
++  role: string;
+ }
+ 
+-const COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at";
++export const USER_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, google_sub, google_email, role";
++const COLS = USER_COLS;
++const OLD_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, NULL AS google_sub, NULL AS google_email, '' AS role";
++
++/** Reads a user. If the 0005 migration has not been applied yet, falls back to the old columns so nobody is locked out. */
++async function loadUser(env: Env, tail: string, ...args: unknown[]): Promise<User | null> {
++  try {
++    return await env.DB.prepare(`SELECT ${COLS} FROM users ${tail}`).bind(...args).first<User>();
++  } catch (e) {
++    if (!/no such (column|table)/i.test(String((e as Error)?.message))) throw e;
++    return env.DB.prepare(`SELECT ${OLD_COLS} FROM users ${tail}`).bind(...args).first<User>();
++  }
++}
+ 
+ export async function userByToken(env: Env, token: string): Promise<User | null> {
+   if (!token) return null;
+-  return env.DB.prepare(`SELECT ${COLS} FROM users WHERE token_hash = ?`).bind(await sha256Hex(token)).first<User>();
++  const h = await sha256Hex(token);
++  const u = await loadUser(env, "WHERE token_hash = ?", h);
++  if (u) return u;
++  // an extra token made by signing in with Google on another device
++  try {
++    return await loadUser(env, "WHERE id = (SELECT user_id FROM user_tokens WHERE token_hash = ?)", h);
++  } catch {
++    return null; // table not there yet: the migration is pending
++  }
++}
++
++/** A new token for another device. Only its hash is stored, and each account keeps its 20 newest. */
++export async function issueToken(env: Env, userId: string): Promise<string> {
++  const token = randomToken();
++  await env.DB.prepare("INSERT INTO user_tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)").bind(await sha256Hex(token), userId, Date.now()).run();
++  await env.DB.prepare(
++    "DELETE FROM user_tokens WHERE user_id = ? AND token_hash NOT IN (SELECT token_hash FROM user_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT 20)",
++  ).bind(userId, userId).run();
++  return token;
+ }
+ 
+ export async function authed(env: Env, req: Request): Promise<User> {
+@@ -45,10 +78,12 @@ const pub = (u: User) => ({
+   badges: JSON.parse(u.badges),
+   avatarV: u.avatar_v,
+   createdAt: u.created_at,
++  role: u.role || "",
+ });
++export const pubUser = pub;
+ 
+ async function byHandle(env: Env, handle: string): Promise<User> {
+-  const u = await env.DB.prepare(`SELECT ${COLS} FROM users WHERE handle = ?`).bind(handle.toLowerCase()).first<User>();
++  const u = await loadUser(env, "WHERE handle = ?", handle.toLowerCase());
+   if (!u) throw new HttpError(404, "No such user");
+   return u;
+ }
+@@ -71,11 +106,12 @@ export async function createUser(env: Env, req: Request): Promise<Response> {
+     throw new HttpError(409, "That handle is taken");
+   }
+   // The token is shown once. Only its hash is stored.
+-  return json(env, { user: { id, handle, name, bio, genres, badges: [], avatarV: 0, createdAt: Date.now() }, token }, 201);
++  return json(env, { user: { id, handle, name, bio, genres, badges: [], avatarV: 0, createdAt: Date.now(), role: "" }, token }, 201);
+ }
+ 
+ export async function me(env: Env, req: Request): Promise<Response> {
+-  return json(env, pub(await authed(env, req)));
++  const u = await authed(env, req);
++  return json(env, { ...pub(u), google: !!u.google_sub, googleEmail: u.google_email || "" });
+ }
+ 
+ export async function patchMe(env: Env, req: Request): Promise<Response> {
+@@ -99,6 +135,7 @@ export async function deleteMe(env: Env, req: Request): Promise<Response> {
+     env.DB.prepare("DELETE FROM show_ratings WHERE user_id=?").bind(u.id),
+     env.DB.prepare("DELETE FROM events WHERE user_id=?").bind(u.id),
+     env.DB.prepare("DELETE FROM follows WHERE follower_id=? OR followee_id=?").bind(u.id, u.id),
++    env.DB.prepare("DELETE FROM user_tokens WHERE user_id=?").bind(u.id),
+     env.DB.prepare("DELETE FROM users WHERE id=?").bind(u.id),
+   ]);
+   return json(env, { ok: true });
+@@ -259,25 +296,25 @@ export async function searchUsers(env: Env, req: Request): Promise<Response> {
+   const q = (new URL(req.url).searchParams.get("q") || "").trim().toLowerCase().replace(/^@/, "").replace(/[%_]/g, "");
+   const like = `%${q}%`;
+   const rows = await env.DB.prepare(
+-    `SELECT us.handle, us.name, us.avatar_v, us.bio,
++    `SELECT us.handle, us.name, us.avatar_v, us.bio, us.role,
+             EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = us.id) AS following
+        FROM users us WHERE us.id != ? AND (? = '' OR us.handle LIKE ? OR lower(us.name) LIKE ?)
+       ORDER BY following DESC, us.created_at DESC LIMIT 40`,
+   ).bind(u.id, u.id, q, like, like).all<any>();
+-  return json(env, { users: rows.results.map((r) => ({ handle: r.handle, name: r.name, bio: r.bio, avatarV: r.avatar_v, following: !!r.following })) });
++  return json(env, { users: rows.results.map((r) => ({ handle: r.handle, name: r.name, bio: r.bio, avatarV: r.avatar_v, role: r.role || "", following: !!r.following })) });
+ }
+ 
+ export async function feed(env: Env, req: Request): Promise<Response> {
+   const u = await authed(env, req);
+   const before = int(new URL(req.url).searchParams.get("before"), Date.now() + 1);
+   const rows = await env.DB.prepare(
+-    `SELECT e.id, e.type, e.payload, e.created_at, us.handle, us.name, us.avatar_v
++    `SELECT e.id, e.type, e.payload, e.created_at, us.handle, us.name, us.avatar_v, us.role
+        FROM events e JOIN follows f ON f.followee_id = e.user_id AND f.follower_id = ?
+        JOIN users us ON us.id = e.user_id
+       WHERE e.created_at < ? ORDER BY e.created_at DESC LIMIT 50`,
+   ).bind(u.id, before).all<any>();
+   return json(env, {
+-    items: rows.results.map((r) => ({ id: r.id, type: r.type, at: r.created_at, user: { handle: r.handle, name: r.name, avatarV: r.avatar_v }, ...JSON.parse(r.payload) })),
++    items: rows.results.map((r) => ({ id: r.id, type: r.type, at: r.created_at, user: { handle: r.handle, name: r.name, avatarV: r.avatar_v, role: r.role || "" }, ...JSON.parse(r.payload) })),
+   });
+ }
+ 
+diff --git a/backend/test/google.ts b/backend/test/google.ts
+new file mode 100644
+index 0000000..e15c88f
+--- /dev/null
++++ b/backend/test/google.ts
+@@ -0,0 +1,151 @@
++import { readFileSync } from "fs";
++import { call, makeDb, makeEnv } from "./harness";
++
++let fails = 0;
++const ok = (n: string, c: boolean, extra?: any) => { console.log((c ? "PASS " : "FAIL ") + n + (c ? "" : " " + JSON.stringify(extra ?? ""))); if (!c) fails++; };
++
++// A fake Google: our own RSA key, published where the worker looks for Google's keys.
++const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
++const jwk: any = { ...(await crypto.subtle.exportKey("jwk", pair.publicKey)), kid: "k1", alg: "RS256", use: "sig" };
++let certFetches = 0;
++const prev = globalThis.fetch;
++globalThis.fetch = (async (u: any, init: any) => {
++  if (String(u).startsWith("https://www.googleapis.com/oauth2/v3/certs")) { certFetches++; return new Response(JSON.stringify({ keys: [jwk] })); }
++  return prev(u, init);
++}) as any;
++
++const enc = (o: any) => btoa(JSON.stringify(o)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
++async function idToken(claims: any, opts: { kid?: string; tamper?: boolean } = {}) {
++  const now = Math.floor(Date.now() / 1000);
++  const payload = { iss: "https://accounts.google.com", aud: "client-123.apps.googleusercontent.com", sub: "g-1", email: "a@example.com", email_verified: true, name: "Ann G", iat: now, exp: now + 3600, ...claims };
++  const head = enc({ alg: "RS256", kid: opts.kid ?? "k1", typ: "JWT" });
++  const data = head + "." + enc(payload);
++  const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(data)));
++  let s = btoa(String.fromCharCode(...sig)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
++  if (opts.tamper) s = s.slice(0, -4) + (s.endsWith("AAAA") ? "BBBB" : "AAAA");
++  return data + "." + s;
++}
++
++// ---- upgrade from the schema before this release ----
++{
++  const { db, DB } = makeDb("0004_transcript_timing.sql");
++  db.exec("INSERT INTO users (id, handle, name, token_hash, created_at) VALUES ('u1','Hytyei','Hadi','h1',1),('u2','bob','Bob','h2',1)");
++  db.exec(readFileSync(import.meta.dir + "/../migrations/0005_google_and_founder.sql", "utf8"));
++  const roles = Object.fromEntries((db.prepare("SELECT handle, role FROM users").all() as any[]).map((r) => [r.handle, r.role]));
++  ok("upgrade: Hytyei is founder, others are not", roles["Hytyei"] === "founder" && roles["bob"] === "", roles);
++  ok("upgrade: existing users and tokens untouched", (db.prepare("SELECT COUNT(*) n FROM users").get() as any).n === 2 && (db.prepare("SELECT token_hash FROM users WHERE id='u1'").get() as any).token_hash === "h1");
++  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users (google_sub) WHERE google_sub IS NOT NULL; UPDATE users SET role = 'founder' WHERE lower(handle) = 'hytyei';");
++  ok("upgrade: the idempotent parts can be rerun", true);
++}
++
++// ---- the feature, on a fresh database ----
++const { db, DB } = makeDb();
++const env = makeEnv(DB);
++
++let r = await call(env, "GET", "/v1/auth/config");
++ok("config: off until a client id is set", r.s === 200 && r.j.google === false);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}) });
++ok("auth: 501 while not configured", r.s === 501, r);
++
++env.GOOGLE_CLIENT_ID = "client-123.apps.googleusercontent.com";
++r = await call(env, "GET", "/v1/auth/config");
++ok("config: shows the public client id", r.j.google === true && r.j.googleClientId === env.GOOGLE_CLIENT_ID);
++
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}) });
++ok("new Google account without a username: 404 needsHandle", r.s === 404 && r.j.needsHandle === true, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}), handle: "ann" });
++ok("sign up without the invite key is refused", r.s === 401, r);
++r = await call(env, "POST", "/v1/auth/google", "secret", { idToken: await idToken({}), handle: "x" });
++ok("bad handle is refused", r.s === 400, r);
++r = await call(env, "POST", "/v1/auth/google", "secret", { idToken: await idToken({}), handle: "ann" });
++const tok1 = r.j.token;
++ok("sign up with Google creates the account", r.s === 201 && r.j.created === true && /^lst_/.test(tok1) && r.j.user.handle === "ann" && r.j.user.name === "Ann G", r);
++r = await call(env, "GET", "/v1/me", tok1);
++ok("the new token works and shows the linked email", r.s === 200 && r.j.google === true && r.j.googleEmail === "a@example.com" && r.j.role === "", r);
++
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}) });
++const tok2 = r.j.token;
++ok("signing in again needs no invite key and gives a new token", r.s === 200 && r.j.created === false && tok2 && tok2 !== tok1, r);
++ok("both devices' tokens work", (await call(env, "GET", "/v1/me", tok1)).s === 200 && (await call(env, "GET", "/v1/me", tok2)).s === 200);
++ok("only hashes are stored", (db.prepare("SELECT COUNT(*) n FROM user_tokens WHERE token_hash LIKE 'lst_%'").get() as any).n === 0);
++r = await call(env, "POST", "/v1/auth/google", "secret", { idToken: await idToken({}), handle: "someoneelse" });
++ok("a linked Google account signs in even if a handle is sent", r.s === 200 && r.j.user.handle === "ann", r);
++ok("the google keys are cached", certFetches === 1, certFetches);
++
++// bad tokens
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}, { tamper: true }) });
++ok("tampered signature refused", r.s === 401, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ aud: "other-client" }) });
++ok("token for another app refused", r.s === 401, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ iss: "https://evil.example" }) });
++ok("wrong issuer refused", r.s === 401, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ exp: Math.floor(Date.now() / 1000) - 3600 }) });
++ok("expired token refused", r.s === 401, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ email_verified: false }) });
++ok("unverified email refused", r.s === 403, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}, { kid: "nope" }) });
++ok("unknown key id refused", r.s === 401, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: "abc" });
++ok("junk refused", r.s === 401, r);
++r = await call(env, "POST", "/v1/auth/google", "", {});
++ok("missing token refused", r.s === 401, r);
++
++// linking an existing (token-only) account
++r = await call(env, "POST", "/v1/users", "secret", { handle: "bob", name: "Bob" });
++const bob = r.j.token;
++r = await call(env, "POST", "/v1/me/google", "", { idToken: await idToken({ sub: "g-2", email: "b@example.com" }) });
++ok("linking needs an account token", r.s === 401, r);
++r = await call(env, "POST", "/v1/me/google", bob, { idToken: await idToken({}) });
++ok("a Google account linked to someone else can't be linked again", r.s === 409, r);
++r = await call(env, "POST", "/v1/me/google", bob, { idToken: await idToken({ sub: "g-2", email: "b@example.com" }) });
++ok("link my existing account", r.s === 200 && r.j.googleEmail === "b@example.com", r);
++r = await call(env, "POST", "/v1/me/google", bob, { idToken: await idToken({ sub: "g-2", email: "b@example.com" }) });
++ok("linking the same Google account again is fine", r.s === 200, r);
++r = await call(env, "POST", "/v1/me/google", bob, { idToken: await idToken({ sub: "g-3" }) });
++ok("a second, different Google account is refused", r.s === 409, r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ sub: "g-2", email: "b@example.com" }) });
++ok("signing in with the linked Google gets the old account back", r.s === 200 && r.j.user.handle === "bob", r);
++r = await call(env, "DELETE", "/v1/me/google", bob);
++ok("unlink", r.s === 200, r);
++r = await call(env, "GET", "/v1/me", bob);
++ok("unlink keeps the account and its token", r.s === 200 && r.j.google === false && r.j.googleEmail === "", r);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ sub: "g-2" }) });
++ok("after unlinking, that Google account no longer signs in", r.s === 404, r);
++r = await call(env, "POST", "/v1/me/google", bob, { idToken: await idToken({ sub: "g-3", email: "c@example.com" }) });
++ok("and a different Google account can be linked", r.s === 200, r);
++
++// role / founder
++db.exec("UPDATE users SET role='founder' WHERE handle='ann'");
++r = await call(env, "GET", "/v1/me", tok1);
++ok("me shows the founder role", r.j.role === "founder", r);
++r = await call(env, "GET", "/v1/users/ann", bob);
++ok("profile shows the role and never the email", r.s === 200 && r.j.role === "founder" && !JSON.stringify(r.j).includes("example.com"), r);
++r = await call(env, "GET", "/v1/users?q=ann", bob);
++ok("search shows the role", r.j.users[0].role === "founder", r);
++r = await call(env, "GET", "/v1/users?q=", tok1);
++ok("others have an empty role", r.j.users.every((x: any) => x.role === ""), r);
++r = await call(env, "PATCH", "/v1/me", tok1, { role: "founder", name: "Ann" });
++ok("a role can't be set from the app", (db.prepare("SELECT role FROM users WHERE handle='bob'").get() as any).role === "");
++r = await call(env, "PATCH", "/v1/me", bob, { role: "founder" });
++ok("nor by editing your own profile", (db.prepare("SELECT role FROM users WHERE handle='bob'").get() as any).role === "");
++
++// old token flow still works as before
++r = await call(env, "POST", "/v1/users", "secret", { handle: "carl", name: "Carl" });
++ok("the invite-key sign-up still works", r.s === 201 && /^lst_/.test(r.j.token) && r.j.user.role === "", r);
++
++// deleting an account removes its extra tokens and its Google link
++const annId = (db.prepare("SELECT id FROM users WHERE handle='ann'").get() as any).id;
++r = await call(env, "DELETE", "/v1/me", tok2);
++ok("delete account", r.s === 200, r);
++ok("extra tokens are gone", (db.prepare("SELECT COUNT(*) n FROM user_tokens WHERE user_id=?").get(annId) as any).n === 0);
++ok("the other device's token no longer works", (await call(env, "GET", "/v1/me", tok1)).s === 401);
++r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}) });
++ok("the freed Google account is a new sign-up again", r.s === 404 && r.j.needsHandle === true, r);
++
++// keep only 20 tokens per account
++r = await call(env, "POST", "/v1/auth/google", "secret", { idToken: await idToken({ sub: "g-9", email: "z@example.com" }), handle: "zed" });
++for (let i = 0; i < 25; i++) await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ sub: "g-9" }) });
++ok("at most 20 extra tokens per account", (db.prepare("SELECT COUNT(*) n FROM user_tokens WHERE user_id=(SELECT id FROM users WHERE handle='zed')").get() as any).n === 20);
++
++console.log(fails ? `${fails} FAILED` : "ALL PASSED");
++process.exit(fails ? 1 : 0);
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 3882173..ab220a8 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -10,6 +10,8 @@ glance = "1.1.1"
+ work = "2.9.1"
+ okhttp = "4.12.0"
+ media3 = "1.5.1"
++credentials = "1.3.0"
++googleid = "1.1.1"
+ 
+ [libraries]
+ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+@@ -30,6 +32,9 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
+ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+ media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+ media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
++androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
++androidx-credentials-play = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
++google-id = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
+ 
+ [plugins]
+ android-application = { id = "com.android.application", version.ref = "agp" }
+diff --git a/release/RELEASE-1.5.9.md b/release/RELEASE-1.5.9.md
+new file mode 100644
+index 0000000..8051484
+--- /dev/null
++++ b/release/RELEASE-1.5.9.md
+@@ -0,0 +1,96 @@
++# Release 1.5.9: sign in with Google, link existing accounts, founder badge
++
++**This release changes the app, the server and the database.** Read the "Google setup" part once: it has steps in the Google Cloud website that only you can do.
++
++## What's new
++
++- **Continue with Google** (Settings → Friends and transcripts, when you are not connected). If your Google account is already linked to a Leestn account, it signs you in (no username or invite key needed beyond the server code). If not, type a username first and it creates a new account linked to Google.
++- **Connect Google account** (same place, when you are connected): links Google to the account you already have. Nothing about your account changes: same username, ratings, log, followers. **Disconnect Google** removes the link again.
++- **Several phones.** Signing in with Google on a new phone gives that phone its own key. Your original key keeps working, so nothing is logged out.
++- **Verified founder badge** (gold check) next to the username **Hytyei**, on your profile, on other people's view of your profile, in people lists and in the friends feed. It can only be set on the server; nobody can give it to themselves from the app.
++
++## Database changes (migration 0005, only adds things)
++
++- `users`: new columns `google_sub`, `google_email`, `role` (empty for everybody).
++- new table `user_tokens` for the extra phone keys.
++- the one data change: `role = 'founder'` for the account whose username is `hytyei` (any capitalisation).
++
++No user, rating, log or transcript is deleted or rewritten. The migration runs once and is recorded; the script backs up the database first.
++
++| Question | Answer |
++| --- | --- |
++| Database migration needed? | **Yes**, `0005_google_and_founder.sql` (the script lists and applies it after a backup and your `YES`). |
++| Worker deployment needed? | **Yes.** |
++| Android release needed? | **Yes** (app 1.5.9, versionCode 24; adds Google sign-in libraries). |
++| New secret? | `GOOGLE_CLIENT_ID` (the public client id; see below). Without it the app shows "Google sign-in isn't set up on this server yet" and everything else works as before. |
++
++## Google setup (one time, about 15 minutes)
++
++Google only lets an app use "Sign in with Google" if you register it. This costs nothing.
++
++1. Open https://console.cloud.google.com and sign in with the Google account you want to own this. At the top, click the project picker → **New project** → name it `Leestn` → Create. Make sure the new project is selected.
++2. Menu → **APIs & Services → OAuth consent screen** (or "Google Auth Platform"). Choose **External**, app name `Leestn`, your email as support and developer email. Save. Under **Audience / Test users**, add the Google emails of everyone who will sign in (up to 100). While the app is in "Testing", only listed people can use it, which is fine for a friends server. (You can press "Publish app" later; basic sign-in with email and name needs no Google review.)
++3. **APIs & Services → Credentials → Create credentials → OAuth client ID → Application type: Web application**, name `Leestn server`. No URLs are needed. Create, then **copy the Client ID** (it ends in `.apps.googleusercontent.com`).
++4. Create a second one: **Create credentials → OAuth client ID → Application type: Android**. Package name: `app.leestn`. SHA-1: the fingerprint of the key that signs your release app. To read it, in PowerShell run (the file and alias are the ones in your `keystore.properties`; it asks for the keystore password, which stays on your computer):
++
++       keytool -list -v -keystore "PATH\TO\your-keystore.jks" -alias YOUR_ALIAS
++
++   Copy the line that starts with `SHA1:`. If you also want to try debug builds from Android Studio, create one more Android client with the debug key's SHA-1 (`keytool -list -v -keystore "$env:USERPROFILE\.android\debug.keystore" -alias androiddebugkey -storepass android -keypass android`).
++   Both clients must be in the **same project**. The Android client is not copied anywhere; Google matches it by package name and fingerprint.
++5. Give the server the Web client id (after the release steps below):
++
++       cd backend
++       npx wrangler secret put GOOGLE_CLIENT_ID
++
++   It asks for the value: paste the **Web** client id from step 3. This targets the existing Worker named in `backend\wrangler.toml` (`leestn-api`), and `wrangler.toml` itself is not changed. (The id is not really secret; a secret is just the way to set it without editing that file.)
++
++Phones need Google Play Services (normal Android phones have it).
++
++## Release steps
++
++1. Pick the patch for what you have applied: `leestn-v1.5.9-from-1.5.8.patch`, `-from-1.5.7.patch`, `-from-1.5.6.patch`, `-from-1.5.5.patch` or `-from-1.0.patch`.
++
++       git apply --check <patch name>
++       git apply <patch name>
++
++   `git status` must not list `backend/wrangler.toml`.
++2. Backend (backup, migration, deploy, health check, founder check, all with `YES` gates):
++
++       powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
++
++3. Google secret (step 5 above): `cd backend`, `npx wrangler secret put GOOGLE_CLIENT_ID`.
++4. Check it is on: open https://leestn-api.thehdv7.workers.dev/v1/auth/config in a browser. It should show `"google":true` and your client id.
++5. App:
++
++       git add -A
++       git commit -m "1.5.9: Google sign-in, account linking, founder badge"
++       git push
++       git tag v1.5.9
++       git push origin v1.5.9
++
++   When the GitHub build finishes, open Settings → About → Check for updates on the phone.
++6. On your phone: Settings → Friends and transcripts → **Connect Google account** → pick your Google account. Your profile should show the gold "Verified founder" tag.
++
++## If the founder badge is missing
++
++The script's last step lists accounts that have the badge. If `hytyei` is not there (for example the account has a different username on the server), tell me the exact username. To add it yourself later (changes one row, nothing else):
++
++    cd backend
++    npx wrangler d1 execute leestn --remote --command "UPDATE users SET role = 'founder' WHERE lower(handle) = 'hytyei'"
++
++## Backup and rollback
++
++- The script saves a full backup to `backups\` and a Time Travel restore point first.
++- Worker code only: `npx wrangler rollback` in `backend`. The new database columns and table are harmless to the older code (it ignores them), so you do not have to undo the migration.
++- App: install the previous APK over it.
++- "Migration done but deploy failed": nothing breaks; run the script again, it skips the finished migration and deploys.
++- The new code also still works if the migration is somehow not applied yet (sign-in with the old keys keeps working; only the new Google and badge features need it).
++
++## Risks
++
++- **The Android code has never been compiled by me**, and this release adds new libraries (Google sign-in). A build error is possible: paste it and I'll fix it.
++- **Google Sign-in can't be tested here.** The server side is tested with a simulated Google (signature, audience, expiry, linking rules, several phones). The phone side is not, and Google's setup is the usual source of trouble: if the account picker says sign-in failed, the package name or SHA-1 in step 4 is the first thing to check. Tell me the exact message.
++- Anyone who holds a Google account linked to an account can sign in to it. Unlinking is under Settings. Deleting your account also removes its link.
++- A server-side token or Google email is never shown to other users.
++- Only people on the Google "Test users" list can sign in until you publish the app in the Google console.
++- The badge is set by username when the migration runs. Nobody can claim "hytyei" for the badge later, because the badge is not given at sign-up.
+diff --git a/release/release-backend.ps1 b/release/release-backend.ps1
+index e6fd96c..1518171 100644
+--- a/release/release-backend.ps1
++++ b/release/release-backend.ps1
+@@ -153,8 +153,15 @@ try {
+     Info "Live Worker says: name=$($h.name) version=$($h.version)"
+     if ($h.version -ne $want) { Warn "Expected version $want. The live Worker may still be updating; run the health check again in a minute." }
+     else { Info "Matches this release ($want)." }
++
++    # -----------------------------------------------------------------------------------------------
++    Say '8. Check the founder badge (read-only: only looks, changes nothing)'
++    $f = Capture { npx wrangler d1 execute $ExpectedDbName --remote --command "SELECT handle, role FROM users WHERE role = 'founder'" }
++    Write-Host $f
++    if ($f -notmatch '(?i)hytyei') { Warn 'No account named Hytyei has the founder badge on this database. If you have not created that account yet, the badge can be added later (see RELEASE-1.5.9.md).' }
++    else { Info 'Founder badge is set for Hytyei.' }
+ }
+ finally { Pop-Location }
+ 
+ Say 'Done'
+-Info 'If anything looks wrong, see release\RELEASE-1.5.6.md, section "If something goes wrong".'
++Info 'If anything looks wrong, see release\RELEASE-1.5.9.md, section "If something goes wrong".'

@@ -12,13 +12,22 @@ import java.net.URLEncoder
 
 /** One person on a Leestn server. */
 data class Usage(val limitMin: Int, val usedMin: Double, val remainingMin: Double, val resetsAt: Long)
-data class RPerson(val handle: String, val name: String, val bio: String, val avatarV: Long, val following: Boolean)
+data class RPerson(val handle: String, val name: String, val bio: String, val avatarV: Long, val following: Boolean, val role: String = "")
+
+/** Own account details, including the linked Google email (empty when none). */
+data class RMe(val handle: String, val name: String, val role: String, val googleEmail: String)
+
+/** Result of signing in or up with Google. */
+data class GoogleResult(val token: String, val handle: String, val name: String, val created: Boolean)
+
+/** The server has no account for this Google login and wants a username. */
+class NeedsHandle(message: String) : IOException(message)
 
 /** One thing a followed person listened to. */
 data class RFeedItem(
     val id: Long, val at: Long, val handle: String, val name: String, val avatarV: Long,
     val epId: String, val epTitle: String, val showId: String, val showName: String, val showArt: String, val feedUrl: String,
-    val rating: Int?, val listenedAt: String,
+    val rating: Int?, val listenedAt: String, val role: String = "",
 ) {
     val key: String get() = "$handle:$epId"
 }
@@ -33,6 +42,7 @@ data class RProfile(
     val followers: Int, val following: Int, val isFollowing: Boolean, val isMe: Boolean,
     val episodes: Int, val hours: Double, val avgRating: Double?,
     val topShows: List<RShow>, val recent: List<RRecent>, val showRatings: List<RShowRating>, val badges: List<RBadge>,
+    val role: String = "",
 )
 
 /** What everyone on the server thinks of a show. */
@@ -82,6 +92,7 @@ object Server {
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
                 val msg = try { JSONObject(text).optString("error") } catch (e: Exception) { "" }
+                if (resp.code == 404 && try { JSONObject(text).optBoolean("needsHandle") } catch (e: Exception) { false }) throw NeedsHandle(msg)
                 throw IOException(msg.ifBlank { "Server error ${resp.code}" })
             }
             return if (text.isBlank()) JSONObject() else JSONObject(text)
@@ -97,6 +108,35 @@ object Server {
     fun join(base: String, inviteKey: String, handle: String, name: String, bio: String): String {
         val j = call("POST", base, inviteKey, "/v1/users", JSONObject().put("handle", handle).put("name", name).put("bio", bio))
         return j.getString("token")
+    }
+
+    /** The Google client id this server uses for sign-in, or empty when Google sign-in is not set up there. Needs no login. */
+    fun googleClientId(base: String): String = call("GET", base, "", "/v1/auth/config").optString("googleClientId")
+
+    /**
+     * Sign in with a Google ID token. If the Google account is linked already, signs in. Otherwise, with a [handle] and the
+     * server's [inviteKey], creates an account. Throws [NeedsHandle] when it needs a username first.
+     */
+    fun googleAuth(base: String, inviteKey: String, idToken: String, handle: String, name: String): GoogleResult {
+        val body = JSONObject().put("idToken", idToken)
+        if (handle.isNotBlank()) body.put("handle", handle)
+        if (name.isNotBlank()) body.put("name", name)
+        val j = call("POST", base, inviteKey, "/v1/auth/google", body)
+        val u = j.getJSONObject("user")
+        return GoogleResult(j.getString("token"), u.getString("handle"), u.optString("name"), j.optBoolean("created"))
+    }
+
+    /** Link a Google account to the signed-in account. Returns the Google email. */
+    fun linkGoogle(base: String, token: String, idToken: String): String =
+        call("POST", base, token, "/v1/me/google", JSONObject().put("idToken", idToken)).optString("googleEmail")
+
+    fun unlinkGoogle(base: String, token: String) {
+        call("DELETE", base, token, "/v1/me/google")
+    }
+
+    fun account(base: String, token: String): RMe {
+        val j = call("GET", base, token, "/v1/me")
+        return RMe(j.getString("handle"), j.optString("name"), j.optString("role"), j.optString("googleEmail"))
     }
 
     fun patchMe(base: String, token: String, name: String, bio: String) {
@@ -116,7 +156,7 @@ object Server {
     /** Own account: handle, name, bio, avatar version. */
     fun me(base: String, token: String): RPerson {
         val j = call("GET", base, token, "/v1/me")
-        return RPerson(j.getString("handle"), j.optString("name"), j.optString("bio"), j.optLong("avatarV"), false)
+        return RPerson(j.getString("handle"), j.optString("name"), j.optString("bio"), j.optLong("avatarV"), false, j.optString("role"))
     }
 
     /** Today's free Whisper allowance on the server. Read-only. */
@@ -138,7 +178,7 @@ object Server {
         val a = j.optJSONArray("users") ?: return emptyList()
         return (0 until a.length()).mapNotNull { i ->
             val o = a.optJSONObject(i) ?: return@mapNotNull null
-            RPerson(o.getString("handle"), o.optString("name"), o.optString("bio"), o.optLong("avatarV"), o.optBoolean("following"))
+            RPerson(o.getString("handle"), o.optString("name"), o.optString("bio"), o.optLong("avatarV"), o.optBoolean("following"), o.optString("role"))
         }
     }
 
@@ -156,7 +196,7 @@ object Server {
             RFeedItem(
                 o.optLong("id"), o.optLong("at"), u.optString("handle"), u.optString("name"), u.optLong("avatarV"),
                 o.optString("epId"), o.optString("epTitle"), o.optString("showId"), o.optString("showName"), o.optString("showArt"),
-                o.optString("feedUrl"), optInt(o, "rating"), o.optString("listenedAt"),
+                o.optString("feedUrl"), optInt(o, "rating"), o.optString("listenedAt"), u.optString("role"),
             )
         }
     }
@@ -195,7 +235,7 @@ object Server {
         return RProfile(
             j.optString("handle"), j.optString("name"), j.optString("bio"), j.optLong("avatarV"),
             j.optInt("followers"), j.optInt("following"), j.optBoolean("isFollowing"), j.optBoolean("isMe"),
-            st.optInt("episodes"), st.optDouble("hours", 0.0), optDbl(st, "avgRating"), tops, recent, rated, badges,
+            st.optInt("episodes"), st.optDouble("hours", 0.0), optDbl(st, "avgRating"), tops, recent, rated, badges, j.optString("role"),
         )
     }
 

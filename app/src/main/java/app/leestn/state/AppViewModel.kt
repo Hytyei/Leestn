@@ -1,4 +1,4 @@
-package app.leestn.state
+﻿package app.leestn.state
 
 import android.app.Application
 import android.content.ComponentName
@@ -26,6 +26,8 @@ import androidx.media3.session.SessionToken
 import app.leestn.PlaybackService
 import app.leestn.data.AvatarImage
 import app.leestn.data.Backend
+import app.leestn.data.GoogleSignIn
+import app.leestn.data.NeedsHandle
 import app.leestn.data.GroupRatings
 import app.leestn.data.RFeedItem
 import app.leestn.data.RPerson
@@ -128,6 +130,11 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     var serverKey by mutableStateOf(prefs.getString("serverKey", "") ?: "")
         private set
     var serverHandle by mutableStateOf(prefs.getString("serverHandle", "") ?: "")
+    /** The Google account linked to this Leestn account (its email), empty when none. */
+    var googleEmail by mutableStateOf(prefs.getString("googleEmail", "") ?: "")
+        private set
+    /** "founder" shows a verified badge next to your name. Set on the server only. */
+    var myRole by mutableStateOf(prefs.getString("myRole", "") ?: "")
         private set
     var serverBusy by mutableStateOf<Load>(Load.Idle)
         private set
@@ -441,6 +448,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             stubs.keys.toList().forEach { ensureShow(it) }
             publishWidgets()
             if (connected && (dirtyEps.isNotEmpty() || dirtyShows.isNotEmpty())) scheduleSync(1500)
+            if (connected) refreshAccount()
         }
         connect()
         viewModelScope.launch {
@@ -558,13 +566,13 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         val cont = prog.entries.mapNotNull { (id, secs) ->
             val ep = Catalog.episode(id) ?: return@mapNotNull null
             val frac = if (ep.durationSec > 0) secs.toFloat() / ep.durationSec else 0f
-            WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " · " + Dates.clock(secs) + " in", frac)
+            WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " Â· " + Dates.clock(secs) + " in", frac)
         }.take(5)
         val fresh = subs.flatMap { pid -> Catalog.show(pid)?.eps?.take(6) ?: emptyList() }
             .filter { log[it.id]?.d == null && it.audioUrl.isNotBlank() }
             .sortedByDescending { it.date }
             .take(8)
-            .map { ep -> WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " · " + Dates.rel(ep.date), 0f) }
+            .map { ep -> WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " Â· " + Dates.rel(ep.date), 0f) }
         val year = Dates.today().substring(0, 4)
         val st = StatsCalc.compute(log.toMap(), year)
         val week = IntArray(7)
@@ -1037,24 +1045,122 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val token = withContext(Dispatchers.IO) { Server.join(base, key, h, shown, profileBio) }
-                serverUrl = base; serverToken = token; serverKey = key; serverHandle = h; profileName = shown
-                prefs.edit().putString("serverUrl", base).putString("serverToken", token).putString("serverKey", key)
-                    .putString("serverHandle", h).putString("profileName", shown).apply()
-                log.keys.forEach { dirtyEps[it] = 1 }
-                showRatings.keys.forEach { dirtyShows[it] = 1 }
-                persistDirty()
-                serverBusy = Load.Done
-                avatarFile?.let { f ->
-                    try { withContext(Dispatchers.IO) { Server.putAvatar(base, token, f.readBytes()) } } catch (e: Exception) { /* uploaded next time the photo changes */ }
-                }
-                transcripts.clear()
-                scheduleSync(300)
-                loadFeed(force = true)
-                searchPeople("")
+                adoptAccount(base, token, key, h, shown)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 serverBusy = Load.Failed(e.message ?: "Couldn't connect")
+            }
+        }
+    }
+
+    /** Remember a freshly created or signed-in account on this device and start syncing. */
+    private suspend fun adoptAccount(base: String, token: String, key: String, handle: String, shown: String) {
+        serverUrl = base; serverToken = token; serverKey = key; serverHandle = handle; profileName = shown
+        prefs.edit().putString("serverUrl", base).putString("serverToken", token).putString("serverKey", key)
+            .putString("serverHandle", handle).putString("profileName", shown).apply()
+        log.keys.forEach { dirtyEps[it] = 1 }
+        showRatings.keys.forEach { dirtyShows[it] = 1 }
+        persistDirty()
+        serverBusy = Load.Done
+        avatarFile?.let { f ->
+            try { withContext(Dispatchers.IO) { Server.putAvatar(base, token, f.readBytes()) } } catch (e: Exception) { /* uploaded next time the photo changes */ }
+        }
+        transcripts.clear()
+        refreshAccount()
+        scheduleSync(300)
+        loadFeed(force = true)
+        searchPeople("")
+    }
+
+    /** Sign in (or, with a username, sign up) with Google. [context] must be the screen's activity. */
+    fun googleConnect(context: android.content.Context, url: String, inviteKey: String, handle: String, name: String) {
+        val base = url.trim().trimEnd('/')
+        val h = handle.trim().lowercase().removePrefix("@")
+        val key = inviteKey.trim()
+        if (!base.startsWith("https://")) { serverBusy = Load.Failed("The server address must start with https://"); return }
+        if (h.isNotEmpty() && !Regex("[a-z0-9_]{3,30}").matches(h)) { serverBusy = Load.Failed("Your username needs 3 to 30 letters, numbers or underscores"); return }
+        serverBusy = Load.Busy
+        viewModelScope.launch {
+            try {
+                val clientId = withContext(Dispatchers.IO) { Server.googleClientId(base) }
+                if (clientId.isBlank()) {
+                    serverBusy = Load.Failed("Google sign-in isn't set up on this server yet. Whoever runs it needs to add the Google client ID (see the README).")
+                    return@launch
+                }
+                val idToken = GoogleSignIn.idToken(context, clientId)
+                val res = withContext(Dispatchers.IO) { Server.googleAuth(base, key, idToken, h, name.trim().ifBlank { profileName }) }
+                adoptAccount(base, res.token, key, res.handle, res.name.ifBlank { res.handle })
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: NeedsHandle) {
+                serverBusy = Load.Failed("No Leestn account is linked to this Google account yet. Type a username above, then tap Continue with Google again.")
+            } catch (e: Throwable) {
+                serverBusy = Load.Failed(e.message ?: "Couldn't sign in with Google")
+            }
+        }
+    }
+
+    /** Connect a Google account to the account you are signed in with. */
+    fun linkGoogle(context: android.content.Context) {
+        if (!connected) return
+        val base = serverUrl
+        val tok = serverToken
+        serverBusy = Load.Busy
+        viewModelScope.launch {
+            try {
+                val clientId = withContext(Dispatchers.IO) { Server.googleClientId(base) }
+                if (clientId.isBlank()) {
+                    serverBusy = Load.Failed("Google sign-in isn't set up on this server yet. Whoever runs it needs to add the Google client ID (see the README).")
+                    return@launch
+                }
+                val idToken = GoogleSignIn.idToken(context, clientId)
+                val email = withContext(Dispatchers.IO) { Server.linkGoogle(base, tok, idToken) }
+                googleEmail = email
+                prefs.edit().putString("googleEmail", email).apply()
+                serverBusy = Load.Done
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                serverBusy = Load.Failed(e.message ?: "Couldn't connect Google")
+            }
+        }
+    }
+
+    fun unlinkGoogle() {
+        if (!connected) return
+        val base = serverUrl
+        val tok = serverToken
+        serverBusy = Load.Busy
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { Server.unlinkGoogle(base, tok) }
+                googleEmail = ""
+                prefs.edit().putString("googleEmail", "").apply()
+                serverBusy = Load.Done
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                serverBusy = Load.Failed(e.message ?: "Couldn't disconnect Google")
+            }
+        }
+    }
+
+    /** Reads your role (founder badge) and linked Google email from the server. Quiet when offline. */
+    fun refreshAccount() {
+        if (!connected) return
+        val base = serverUrl
+        val tok = serverToken
+        viewModelScope.launch {
+            try {
+                val me = withContext(Dispatchers.IO) { Server.account(base, tok) }
+                myRole = me.role
+                googleEmail = me.googleEmail
+                prefs.edit().putString("myRole", me.role).putString("googleEmail", me.googleEmail).apply()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // not important enough to show an error
             }
         }
     }
@@ -1073,11 +1179,11 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 serverBusy = Load.Failed("Couldn't reach the server to delete your account here (${e.message}). Try again when you are online.")
                 return@launch
             }
-            serverUrl = ""; serverToken = ""; serverKey = ""; serverHandle = ""
+            serverUrl = ""; serverToken = ""; serverKey = ""; serverHandle = ""; googleEmail = ""; myRole = ""
             dirtyEps.clear(); dirtyShows.clear()
             feedItems = emptyList(); people = emptyList(); profiles.clear(); group.clear(); transcripts.clear()
             feedLoad = Load.Idle; peopleLoad = Load.Idle
-            prefs.edit().remove("serverUrl").remove("serverToken").remove("serverKey").remove("serverHandle").remove("dirtyEps").remove("dirtyShows").apply()
+            prefs.edit().remove("serverUrl").remove("serverToken").remove("serverKey").remove("serverHandle").remove("googleEmail").remove("myRole").remove("dirtyEps").remove("dirtyShows").apply()
             serverBusy = Load.Idle
         }
     }

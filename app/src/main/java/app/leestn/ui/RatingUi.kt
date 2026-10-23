@@ -60,18 +60,18 @@ fun RatingChip(r: Double, modifier: Modifier = Modifier) {
 
 private class Col(val label: String, val eps: List<Episode>)
 
-/** Main episodes grouped by season. Long seasons are cut into blocks so the grid stays a sensible height. */
+/** Main episodes grouped by season. Long seasons are cut into blocks of 10, side by side, so the grid stays short and scrolls sideways. */
 private fun columns(p: Podcast): List<Col> {
     val out = ArrayList<Col>()
     for (c in p.cats) {
         val mains = p.mains.filter { it.cat.id == c.id }
         if (mains.isEmpty()) continue
         val base = c.short.ifBlank { "" }
-        if (mains.size <= 30) {
+        if (mains.size <= 10) {
             out.add(Col(base.ifBlank { "All" }, mains))
         } else {
-            mains.chunked(25).forEachIndexed { i, part ->
-                val from = i * 25 + 1
+            mains.chunked(10).forEachIndexed { i, part ->
+                val from = i * 10 + 1
                 out.add(Col((if (base.isBlank()) "" else "$base ") + "$from-${from + part.size - 1}", part))
             }
         }
