@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -115,15 +118,17 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
         },
         contentPadding = PaddingValues(bottom = 24.dp),
     ) {
-        item(key = "back") {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-        }
         item(key = "head") {
-            Row(Modifier.padding(horizontal = 16.dp).appear(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Poster(p, Modifier.width(128.dp).glow(tint, 22.dp, 0.4f), showName = true, corner = 16.dp)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("${p.genre.ifBlank { "Podcast" }.uppercase()}${if (p.host.isNotBlank()) " · " + p.host.uppercase() else ""}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.headlineMedium)
+            Box(Modifier.fillMaxWidth()) {
+                IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 20.dp).appear(),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Poster(p, Modifier.width(180.dp).glow(tint, 28.dp, 0.45f), showName = true, corner = 28.dp)
+                    Gap(6.dp)
+                    Text("${p.genre.ifBlank { "Podcast" }.uppercase()}${if (p.host.isNotBlank()) " · " + p.host.uppercase() else ""}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
                     vm.showAverage(pid)?.let { avg ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             RatingChip(avg.first)
@@ -131,7 +136,11 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
                         }
                     }
                     if (p.loaded) {
-                        Text("${p.mains.size} main  ·  ${p.sides.size} side  ·  ${p.cats.size} categories", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+                        Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ColorBlock("Main", "${p.mains.size}", LColors.Lilac, Modifier.width(96.dp))
+                            ColorBlock("Side", "${p.sides.size}", LColors.Mint, Modifier.width(96.dp))
+                            ColorBlock("Seasons", "${p.cats.size}", LColors.Sky, Modifier.width(96.dp))
+                        }
                     }
                 }
             }
@@ -139,7 +148,7 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
         item(key = "about") {
             val text = p.description.ifBlank { p.tagline }
             Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(tween(Motion.Normal))) {
-                if (text.isNotBlank()) {
+                if (text.isNotBlank()) Column(Modifier.fillMaxWidth().card(24.dp).padding(16.dp)) {
                     Text(text, style = MaterialTheme.typography.bodyMedium, color = LColors.Text2, maxLines = if (more) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
                     if (text.length > 160) {
                         Text(if (more) "Show less" else "Show more", color = LColors.Red, style = MaterialTheme.typography.labelLarge, modifier = Modifier.pressable { more = !more }.padding(vertical = 6.dp))
@@ -164,8 +173,10 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
                     item { ActionPill("List", Icons.Rounded.Bookmarks) { sheet = true } }
                 }
                 if (p.loaded && total > 0) {
-                    ThinBar(done / total.toFloat())
-                    Text("You have finished $done of $total main episodes", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+                    Column(Modifier.fillMaxWidth().card(24.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ThinBar(done / total.toFloat())
+                        Text("You have finished $done of $total main episodes", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+                    }
                 }
                 AnimatedVisibility(load is Load.Busy && p.loaded, enter = fadeIn(), exit = fadeOut()) {
                     Text("Checking for new episodes…", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
@@ -194,10 +205,11 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
                 Column(Modifier.padding(vertical = 8.dp)) { ShowRatingsPanel(vm, p, openEp) }
             }
             item(key = "cats") {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val tabs = listOf("all" to "All (${p.eps.size})") + p.cats.map { c -> c.id to "${c.name} (${p.eps.count { it.cat.id == c.id }})" }
-                    items(tabs, key = { it.first }) { (id, label) -> Chip(label, cat == id) { cat = id } }
-                }
+                val tabs = listOf("all" to "All (${p.eps.size})") + p.cats.map { c -> c.id to "${c.name} (${p.eps.count { it.cat.id == c.id }})" }
+                PillTabs(
+                    tabs.map { it.second }, tabs.indexOfFirst { it.first == cat }.coerceAtLeast(0), { cat = tabs[it].first },
+                    Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 8.dp),
+                )
             }
             if (cat == "all") {
                 item(key = "order") {

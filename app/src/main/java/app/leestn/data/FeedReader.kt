@@ -21,7 +21,8 @@ class ParsedFeed(
 object FeedReader {
     private const val MAX_ITEMS = 3500
 
-    fun read(input: InputStream): ParsedFeed {
+    /** [baseUrl] is the feed's own address, used to complete relative image addresses. */
+    fun read(input: InputStream, baseUrl: String = ""): ParsedFeed {
         val p = Xml.newPullParser()
         p.setInput(input, null)
 
@@ -37,6 +38,8 @@ object FeedReader {
         var summary = ""
         var image = ""
         var imageFallback = ""
+        var mediaThumb = ""
+        var atomLogo = ""
         var genre = ""
 
         var iTitle = ""
@@ -77,8 +80,17 @@ object FeedReader {
                             val ok = type.isEmpty() || type.startsWith("audio") || type.startsWith("video") || type.contains("mpeg") || type.contains("octet")
                             if (iAudio.isEmpty() && url.isNotBlank() && ok) iAudio = url.trim()
                         }
+                        n == "media:thumbnail" && !inItem -> {
+                            val u = (p.getAttributeValue(null, "url") ?: "").trim()
+                            if (u.isNotEmpty() && mediaThumb.isEmpty()) mediaThumb = u
+                        }
+                        n == "media:content" && !inItem && (p.getAttributeValue(null, "medium") ?: "").equals("image", true) -> {
+                            val u = (p.getAttributeValue(null, "url") ?: "").trim()
+                            if (u.isNotEmpty() && mediaThumb.isEmpty()) mediaThumb = u
+                        }
                         n == "itunes:image" -> {
-                            val href = (p.getAttributeValue(null, "href") ?: "").trim()
+                            // normally href="..."; a few feeds write url="..." instead
+                            val href = (p.getAttributeValue(null, "href") ?: p.getAttributeValue(null, "url") ?: "").trim()
                             if (inItem) { if (href.isNotEmpty()) iImage = href } else if (href.isNotEmpty() && image.isEmpty()) image = href
                         }
                         n == "itunes:category" && !inItem && genre.isEmpty() -> genre = (p.getAttributeValue(null, "text") ?: "").trim()
@@ -125,7 +137,7 @@ object FeedReader {
                                             season = iSeason,
                                             episode = iEpisode,
                                             type = iType,
-                                            imageUrl = iImage,
+                                            imageUrl = Text.absUrl(baseUrl, iImage),
                                             transcripts = iTrans,
                                         )
                                     )
@@ -137,6 +149,7 @@ object FeedReader {
                         when (n) {
                             "image" -> inImage = false
                             "url" -> if (inImage && imageFallback.isEmpty()) imageFallback = t
+                            "logo", "icon" -> if (atomLogo.isEmpty() && (t.startsWith("http") || t.startsWith("/"))) atomLogo = t
                             "title" -> if (depth == 3 && !inImage && title.isEmpty()) title = t
                             "itunes:author" -> if (author.isEmpty()) author = t
                             "language" -> if (depth == 3 && language.isEmpty()) language = t
@@ -154,7 +167,7 @@ object FeedReader {
             title = title,
             author = author,
             descHtml = desc.ifEmpty { summary },
-            imageUrl = image.ifEmpty { imageFallback },
+            imageUrl = Text.absUrl(baseUrl, image.ifEmpty { imageFallback }.ifEmpty { mediaThumb }.ifEmpty { atomLogo }),
             genre = genre,
             items = items,
             language = language,

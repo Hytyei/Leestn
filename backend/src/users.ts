@@ -13,20 +13,53 @@ export interface User {
   google_sub: string | null;
   google_email: string | null;
   role: string;
+  can_transcribe: number;
 }
 
-export const USER_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, google_sub, google_email, role";
+export const USER_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, google_sub, google_email, role, can_transcribe";
 const COLS = USER_COLS;
-const OLD_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, NULL AS google_sub, NULL AS google_email, '' AS role";
+// Older schemas. Everybody who exists before migration 0006 joined with the invite key, so they count as allowed to transcribe.
+const COLS_0005 = "id, handle, name, bio, genres, badges, avatar_v, created_at, google_sub, google_email, role, 1 AS can_transcribe";
+const OLD_COLS = "id, handle, name, bio, genres, badges, avatar_v, created_at, NULL AS google_sub, NULL AS google_email, '' AS role, 1 AS can_transcribe";
 
-/** Reads a user. If the 0005 migration has not been applied yet, falls back to the old columns so nobody is locked out. */
+/** Reads a user. If a migration has not been applied yet, falls back to the older columns so nobody is locked out. */
 async function loadUser(env: Env, tail: string, ...args: unknown[]): Promise<User | null> {
+  const missing = (e: unknown) => /no such (column|table)/i.test(String((e as Error)?.message));
   try {
     return await env.DB.prepare(`SELECT ${COLS} FROM users ${tail}`).bind(...args).first<User>();
   } catch (e) {
-    if (!/no such (column|table)/i.test(String((e as Error)?.message))) throw e;
-    return env.DB.prepare(`SELECT ${OLD_COLS} FROM users ${tail}`).bind(...args).first<User>();
+    if (!missing(e)) throw e;
   }
+  try {
+    return await env.DB.prepare(`SELECT ${COLS_0005} FROM users ${tail}`).bind(...args).first<User>();
+  } catch (e) {
+    if (!missing(e)) throw e;
+  }
+  return env.DB.prepare(`SELECT ${OLD_COLS} FROM users ${tail}`).bind(...args).first<User>();
+}
+
+/** The user (or the invite key itself) behind a transcription request. Friends without transcription access are refused. */
+export async function transcriber(env: Env, req: Request): Promise<{ user: User | null }> {
+  const m = await member(env, req);
+  if (m.user && !m.user.can_transcribe) throw new HttpError(403, "Transcription is invite only. Enter the invite key in Settings.");
+  return m;
+}
+
+/**
+ * Who may create an account. Returns 1 when the caller proved the invite key (may use transcription), 0 for a friend who
+ * joined without it. Open sign-up is on unless SIGNUPS="invite", and keyless sign-ups are capped per rolling day.
+ */
+export async function signupAccess(env: Env, req: Request): Promise<number> {
+  const t = bearer(req);
+  if (t) {
+    if (env.INVITE_KEY && safeEqual(t, env.INVITE_KEY)) return 1;
+    throw new HttpError(401, "That invite key is wrong. Leave it empty to join as a friend without transcription.");
+  }
+  if ((env.SIGNUPS || "").toLowerCase() === "invite") throw new HttpError(401, "This server only accepts people with an invite key");
+  const cap = int(env.MAX_SIGNUPS_PER_DAY, 50, 0, 100_000);
+  const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE created_at > ?").bind(Date.now() - 86_400_000).first<{ n: number }>();
+  if ((r?.n ?? 0) >= cap) throw new HttpError(429, "Too many new accounts today. Try again tomorrow.");
+  return 0;
 }
 
 export async function userByToken(env: Env, token: string): Promise<User | null> {
@@ -89,7 +122,7 @@ async function byHandle(env: Env, handle: string): Promise<User> {
 }
 
 export async function createUser(env: Env, req: Request): Promise<Response> {
-  requireInvite(req, env);
+  const canTranscribe = await signupAccess(env, req);
   const b = await body(req);
   const handle = str(b.handle, 30).trim().toLowerCase();
   const name = str(b.name, 60).trim() || handle;
@@ -98,20 +131,39 @@ export async function createUser(env: Env, req: Request): Promise<Response> {
   const bio = str(b.bio, 300);
   const token = randomToken();
   const id = crypto.randomUUID();
+  const hash = await sha256Hex(token);
   try {
-    await env.DB.prepare("INSERT INTO users (id, handle, name, bio, genres, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(id, handle, name, bio, JSON.stringify(genres), await sha256Hex(token), Date.now())
-      .run();
+    try {
+      await env.DB.prepare("INSERT INTO users (id, handle, name, bio, genres, token_hash, created_at, can_transcribe) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(id, handle, name, bio, JSON.stringify(genres), hash, Date.now(), canTranscribe)
+        .run();
+    } catch (e) {
+      if (!/no such column|has no column named/i.test(String((e as Error)?.message))) throw e;
+      // migration 0006 is not applied yet: create the account the old way (it will count as allowed to transcribe)
+      await env.DB.prepare("INSERT INTO users (id, handle, name, bio, genres, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(id, handle, name, bio, JSON.stringify(genres), hash, Date.now())
+        .run();
+    }
   } catch {
     throw new HttpError(409, "That handle is taken");
   }
   // The token is shown once. Only its hash is stored.
-  return json(env, { user: { id, handle, name, bio, genres, badges: [], avatarV: 0, createdAt: Date.now(), role: "" }, token }, 201);
+  return json(env, { user: { id, handle, name, bio, genres, badges: [], avatarV: 0, createdAt: Date.now(), role: "", canTranscribe: !!canTranscribe }, token }, 201);
 }
 
 export async function me(env: Env, req: Request): Promise<Response> {
   const u = await authed(env, req);
-  return json(env, { ...pub(u), google: !!u.google_sub, googleEmail: u.google_email || "" });
+  return json(env, { ...pub(u), google: !!u.google_sub, googleEmail: u.google_email || "", canTranscribe: !!u.can_transcribe });
+}
+
+/** POST /v1/me/unlock {key}: the invite key turns on transcription for this account. Safe to repeat. */
+export async function unlockTranscription(env: Env, req: Request): Promise<Response> {
+  const u = await authed(env, req);
+  const b = await body(req);
+  const key = str(b.key, 200).trim();
+  if (!env.INVITE_KEY || !key || !safeEqual(key, env.INVITE_KEY)) throw new HttpError(401, "That invite key is wrong");
+  if (!u.can_transcribe) await env.DB.prepare("UPDATE users SET can_transcribe=1 WHERE id=?").bind(u.id).run();
+  return json(env, { ok: true, canTranscribe: true });
 }
 
 export async function patchMe(env: Env, req: Request): Promise<Response> {
@@ -200,7 +252,7 @@ export async function push(env: Env, req: Request): Promise<Response> {
         env.DB.prepare("INSERT OR IGNORE INTO events (user_id, type, ref, payload, created_at) VALUES (?, 'listen', ?, ?, ?)").bind(
           u.id,
           epId,
-          JSON.stringify({ epId, epTitle: str(e.epTitle, 300), showId: str(e.showId, 120), showName: str(e.showName, 200), showArt: str(e.showArt, 500), feedUrl: str(e.feedUrl, 1000), rating, listenedAt: listened }),
+          JSON.stringify({ epId, epTitle: str(e.epTitle, 300), showId: str(e.showId, 120), showName: str(e.showName, 200), showArt: str(e.showArt, 500), feedUrl: str(e.feedUrl, 1000), rating, listenedAt: listened, minutes: int(e.minutes, 0, 0, 3000) }),
           now,
         ),
       );
@@ -304,17 +356,30 @@ export async function searchUsers(env: Env, req: Request): Promise<Response> {
   return json(env, { users: rows.results.map((r) => ({ handle: r.handle, name: r.name, bio: r.bio, avatarV: r.avatar_v, role: r.role || "", following: !!r.following })) });
 }
 
+/** Friends' listens and rates, plus the viewer's own. Own items carry mine:true and how long they listened. */
 export async function feed(env: Env, req: Request): Promise<Response> {
   const u = await authed(env, req);
   const before = int(new URL(req.url).searchParams.get("before"), Date.now() + 1);
   const rows = await env.DB.prepare(
-    `SELECT e.id, e.type, e.payload, e.created_at, us.handle, us.name, us.avatar_v, us.role
-       FROM events e JOIN follows f ON f.followee_id = e.user_id AND f.follower_id = ?
-       JOIN users us ON us.id = e.user_id
-      WHERE e.created_at < ? ORDER BY e.created_at DESC LIMIT 50`,
-  ).bind(u.id, before).all<any>();
+    `SELECT e.id, e.type, e.payload, e.created_at, us.id AS uid, us.handle, us.name, us.avatar_v, us.role,
+            l.minutes AS minutes, l.rating AS cur_rating
+       FROM events e JOIN users us ON us.id = e.user_id
+       LEFT JOIN log_entries l ON l.user_id = e.user_id AND l.ep_id = e.ref
+      WHERE (e.user_id = ? OR e.user_id IN (SELECT followee_id FROM follows WHERE follower_id = ?)) AND e.created_at < ?
+      ORDER BY e.created_at DESC LIMIT 50`,
+  ).bind(u.id, u.id, before).all<any>();
   return json(env, {
-    items: rows.results.map((r) => ({ id: r.id, type: r.type, at: r.created_at, user: { handle: r.handle, name: r.name, avatarV: r.avatar_v, role: r.role || "" }, ...JSON.parse(r.payload) })),
+    items: rows.results.map((r) => {
+      const p = JSON.parse(r.payload);
+      return {
+        ...p,
+        id: r.id, type: r.type, at: r.created_at, mine: r.uid === u.id,
+        user: { handle: r.handle, name: r.name, avatarV: r.avatar_v, role: r.role || "" },
+        // the log row has the current numbers (an old event only knows the rating from when it was first logged)
+        minutes: r.minutes ?? p.minutes ?? 0,
+        rating: r.cur_rating ?? p.rating ?? null,
+      };
+    }),
   });
 }
 

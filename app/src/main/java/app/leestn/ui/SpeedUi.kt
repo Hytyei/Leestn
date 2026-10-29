@@ -28,13 +28,14 @@ fun SpeedDialog(vm: AppViewModel, onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
         containerColor = LColors.Surface,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
         title = { Text("Playback speed") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 Text(speedText(vm.speed), style = MaterialTheme.typography.displaySmall)
                 Slider(
                     value = vm.speed, onValueChange = { vm.changeSpeed(it) }, valueRange = 0.5f..3f, steps = 49,
-                    colors = SliderDefaults.colors(thumbColor = LColors.Red, activeTrackColor = LColors.Red, inactiveTrackColor = LColors.Surface3),
+                    colors = SliderDefaults.colors(thumbColor = LColors.Accent, activeTrackColor = LColors.Accent, inactiveTrackColor = LColors.Surface3),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Chip("−0.05", false) { vm.changeSpeed(vm.speed - 0.05f) }

@@ -12,6 +12,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import app.leestn.data.Catalog
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -127,7 +128,7 @@ fun Poster(
     p: Podcast,
     modifier: Modifier = Modifier,
     ratio: Float = 1f,
-    corner: Dp = 12.dp,
+    corner: Dp = 20.dp,
     showName: Boolean = false,
 ) {
     val shape = RoundedCornerShape(corner)
@@ -193,12 +194,17 @@ fun PersonAvatar(vm: AppViewModel, handle: String, name: String, avatarV: Long, 
 // ---------- small pieces ----------
 
 @Composable
-fun SectionHeader(title: String, action: String? = null, onAction: () -> Unit = {}, modifier: Modifier = Modifier) {
+fun SectionHeader(title: String, action: String? = null, onAction: () -> Unit = {}, modifier: Modifier = Modifier, subtitle: String? = null) {
     Row(modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.padding(end = 8.dp).width(4.dp).height(18.dp).clip(RoundedCornerShape(2.dp)).background(Brush.verticalGradient(listOf(LColors.Red, LColors.Side))))
-        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-        if (action != null) {
-            Text(action, color = LColors.Red, style = MaterialTheme.typography.labelLarge, modifier = Modifier.clickable(onClick = onAction).padding(4.dp))
+        Column(Modifier.weight(1f)) {
+            Row(
+                Modifier.let { if (action != null) it.clip(RoundedCornerShape(10.dp)).pressable(onClick = onAction) else it },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                if (action != null) Icon(Icons.Rounded.ChevronRight, action, tint = LColors.Text2, modifier = Modifier.size(28.dp))
+            }
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = LColors.Text3)
         }
     }
 }
@@ -270,7 +276,7 @@ fun PlayButton(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 36.dp
 
 @Composable
 fun StatTile(value: String, label: String, modifier: Modifier = Modifier) {
-    Column(modifier.clip(RoundedCornerShape(16.dp)).background(LColors.Surface).padding(horizontal = 14.dp, vertical = 12.dp)) {
+    Column(modifier.card(24.dp).padding(horizontal = 14.dp, vertical = 12.dp)) {
         Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
         Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
     }

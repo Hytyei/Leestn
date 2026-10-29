@@ -81,7 +81,7 @@ private fun columns(p: Podcast): List<Col> {
 
 @Composable
 private fun Cell(value: Double?, shownText: String, onClick: (() -> Unit)?) {
-    val base = Modifier.size(width = 38.dp, height = 30.dp).clip(RoundedCornerShape(6.dp))
+    val base = Modifier.size(width = 38.dp, height = 30.dp).clip(RoundedCornerShape(9.dp))
     if (value == null) {
         Box(base.background(LColors.Surface2), contentAlignment = Alignment.Center) { Text("", fontSize = 11.sp) }
     } else {
@@ -103,7 +103,7 @@ fun RatingGraph(vm: AppViewModel, p: Podcast, group: Boolean, openEp: (String) -
     val rows = cols.maxOf { it.eps.size }
     val g = vm.group[p.id]
     fun valueOf(ep: Episode): Double? =
-        if (group) g?.episodes?.get(ep.id)?.first else vm.log[ep.id]?.r?.toDouble()
+        if (!vm.counts(ep)) null else if (group) g?.episodes?.get(ep.id)?.first else vm.log[ep.id]?.r?.toDouble()
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Box(Modifier.height(18.dp))
@@ -155,21 +155,21 @@ fun ShowRatingsPanel(vm: AppViewModel, p: Podcast, openEp: (String) -> Unit) {
     val groupN = if (g?.showAvg != null) g.showN else g?.epsN ?: 0
 
     Column(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).padding(14.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Ratings", style = MaterialTheme.typography.titleLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatBox("Episodes avg", mine?.first, if (mine == null) "rate some episodes" else "${mine.second} rated", Modifier.weight(1f))
-            StatBox("Your rating", own?.toDouble(), if (own == null) "not rated" else "of the show", Modifier.weight(1f))
-            if (vm.connected) StatBox("Server avg", groupValue, if (groupValue == null) "no ratings yet" else "$groupN rating${if (groupN == 1) "" else "s"}", Modifier.weight(1f))
+            ColorBlock("Episodes avg", mine?.let { fmtRating(it.first) } ?: "–", LColors.Lilac, Modifier.weight(1f), if (mine == null) "rate some episodes" else "${mine.second} rated")
+            ColorBlock("Your rating", own?.toString() ?: "–", LColors.Mint, Modifier.weight(1f), if (own == null) "not rated" else "of the show")
+            if (vm.connected) ColorBlock("Server avg", groupValue?.let { fmtRating(it) } ?: "–", LColors.Sky, Modifier.weight(1f), if (groupValue == null) "no ratings yet" else "$groupN rating${if (groupN == 1) "" else "s"}")
         }
         Text("Rate the whole show", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             for (n in 1..10) {
                 val on = own != null && n <= own
                 Box(
-                    Modifier.weight(1f).height(34.dp).clip(RoundedCornerShape(8.dp)).background(if (on) ratingColor(own!!.toDouble()) else LColors.Surface3).pressable { vm.rateShow(p.id, n) },
+                    Modifier.weight(1f).height(36.dp).clip(RoundedCornerShape(10.dp)).background(if (on) ratingColor(own!!.toDouble()) else LColors.Surface3).pressable { vm.rateShow(p.id, n) },
                     contentAlignment = Alignment.Center,
                 ) { Text("$n", color = if (on) Color(0xFF101010) else LColors.Text3, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
             }

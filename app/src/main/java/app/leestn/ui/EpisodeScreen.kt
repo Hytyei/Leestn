@@ -149,7 +149,7 @@ private fun RateBox(n: Int, on: Boolean, modifier: Modifier, onClick: () -> Unit
     ) { Text("$n", color = if (on) Color.White else LColors.Text3, style = MaterialTheme.typography.labelMedium) }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: (String) -> Unit, openEp: (String) -> Unit, openPerson: (String) -> Unit, openSettings: () -> Unit = {}) {
     val ep = Catalog.episode(epId)
@@ -194,7 +194,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
     val listState = rememberLazyListState()
 
     LaunchedEffect(activeIdx, follow, vm.playing) {
-        if (follow && q.isEmpty() && activeIdx >= 0 && vm.playing && isCurrent) listState.animateScrollToItem(TX_START + activeIdx)
+        if (follow && q.isEmpty() && activeIdx >= 0 && vm.playing && isCurrent) listState.animateScrollToItem(TX_START + activeIdx, scrollOffset = -(listState.layoutInfo.viewportSize.height * 0.28f).toInt())
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -209,28 +209,27 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
         } }
         item { Column(Modifier.padding(bottom = 14.dp).appear()) { // 1
-            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val artPop by animateFloatAsState(if (vm.playing && isCurrent) 1f else 0.94f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "epArt")
-                Poster(p, Modifier.width(104.dp).graphicsLayer { scaleX = artPop; scaleY = artPop }.glow(epTint, 20.dp, if (vm.playing && isCurrent) 0.5f else 0.25f).pressable { openShow(p.id) }, corner = 14.dp)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CodeChip(ep)
-                        KindTag(ep.kind)
-                    }
-                    Text(ep.title, style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        "${p.name} · ${ep.cat.name} · ${Dates.full(ep.date)} · ${Dates.dur(ep.min)}",
-                        style = MaterialTheme.typography.labelSmall, color = LColors.Text3,
-                    )
-                    if (ep.afterId != null) {
-                        Catalog.episode(ep.afterId)?.let { Text("Best after ${it.code}", style = MaterialTheme.typography.labelSmall, color = LColors.Side) }
-                    }
+                Poster(p, Modifier.width(160.dp).graphicsLayer { scaleX = artPop; scaleY = artPop }.glow(epTint, 26.dp, if (vm.playing && isCurrent) 0.5f else 0.25f).pressable { openShow(p.id) }, corner = 24.dp)
+                Gap(6.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CodeChip(ep)
+                    KindTag(ep.kind)
+                }
+                Text(ep.title, style = MaterialTheme.typography.headlineMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(
+                    "${p.name} · ${ep.cat.name} · ${Dates.full(ep.date)} · ${Dates.dur(ep.min)}",
+                    style = MaterialTheme.typography.labelSmall, color = LColors.Text3, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                if (ep.afterId != null) {
+                    Catalog.episode(ep.afterId)?.let { Text("Best after ${it.code}", style = MaterialTheme.typography.labelSmall, color = LColors.Side) }
                 }
             }
         } }
         item { Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 14.dp).animateContentSize(tween(Motion.Normal))) { // 2 show notes
             val text = ep.description.ifBlank { ep.blurb }
-            if (text.isNotBlank()) {
+            if (text.isNotBlank()) Column(Modifier.fillMaxWidth().card(24.dp).padding(16.dp)) {
                 Text(text, style = MaterialTheme.typography.bodyMedium, color = LColors.Text2, maxLines = if (more) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
                 if (text.length > 220) {
                     Text(if (more) "Show less" else "Show more", color = LColors.Red, style = MaterialTheme.typography.labelLarge, modifier = Modifier.pressable { more = !more }.padding(vertical = 6.dp))
@@ -240,7 +239,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
         item { Column(Modifier.padding(bottom = 14.dp)) { // 3
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SeekRow(vm, ep)
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val playingNow = vm.playing && isCurrent
                     val loading = vm.buffering && isCurrent
                     ActionPill(
@@ -261,13 +260,13 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                 }
                 val err = vm.playerError
                 if (isCurrent && err != null) {
-                    Text("Playback problem: $err", color = LColors.Red, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
+                    Text("Playback problem: $err", color = LColors.Err, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
                 }
             }
         } }
         item { Column(Modifier.padding(bottom = 14.dp)) { // 4 rating
             Column(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).padding(14.dp),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -280,6 +279,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                         RateBox(n, entry?.r != null && n <= entry.r, Modifier.weight(1f)) { vm.rate(epId, n) }
                     }
                 }
+                SideLabel(vm, ep)
                 if (entry?.r != null && entry.d == null) {
                     Text("Rated but not logged. Add a listened date to count it in your stats.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
                 }
@@ -287,7 +287,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
         } }
         item { Column(Modifier.padding(bottom = 14.dp)) { // 5 listened
             Column(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).padding(14.dp).animateContentSize(tween(Motion.Normal)),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).padding(14.dp).animateContentSize(tween(Motion.Normal)),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text("Listened", style = MaterialTheme.typography.titleMedium)
@@ -296,7 +296,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                 } else {
                     Text("Not logged yet. Finishing the episode logs it for you.", style = MaterialTheme.typography.bodyMedium, color = LColors.Text3)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (entry?.d == null) {
                         ActionPill("Log today", Icons.Rounded.PlayArrow, primary = true) { vm.logListen(epId, Dates.today()) }
                         ActionPill("Pick date", Icons.Rounded.Bookmarks) { picker = true }
@@ -334,10 +334,10 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
                         )
                     }
-                    if (!useCustom && tx is TxState.Ready && tx.generated && vm.connected) Chip("Redo", false) { vm.regenerateTranscript(epId) }
-                    if (synced && !syncMode) Chip("Follow", follow) { follow = !follow }
                 }
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (synced && !syncMode) Chip("Follow", follow) { follow = !follow }
+                    if (!useCustom && tx is TxState.Ready && tx.generated && vm.connected && vm.canTranscribe) Chip("Redo", false) { vm.regenerateTranscript(epId) }
                     if (lines.isNotEmpty()) Chip("Timings", vm.showTimings) { vm.changeShowTimings(!vm.showTimings); if (!vm.showTimings) { syncMode = false; selLine = -1 } }
                     if (lines.isNotEmpty() && vm.showTimings) Chip("Sync", syncMode) { syncMode = !syncMode; if (!syncMode) selLine = -1 }
                     Chip(if (pastedText != null) "Edit pasted text" else "Paste text", false) { pasteDialog = true }
@@ -378,9 +378,12 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                             style = MaterialTheme.typography.bodyMedium, color = LColors.Text3,
                         )
                         val needMin = (ep.durationSec) / 60.0
-                        UsageMeter(vm, needMin = needMin.takeIf { it > 0 })
+                        if (!vm.canTranscribe) {
+                            Text("Transcription is invite only. Enter the invite key in Settings to unlock it.", style = MaterialTheme.typography.bodyMedium, color = LColors.Text2)
+                            ActionPill("Open Settings", Icons.Rounded.Subtitles, onClick = openSettings)
+                        } else UsageMeter(vm, needMin = needMin.takeIf { it > 0 })
                         val left = vm.usage?.remainingMin
-                        val fits = left == null || needMin <= left
+                        val fits = vm.canTranscribe && (left == null || needMin <= left)
                         if (fits) ActionPill("Generate transcript", Icons.Rounded.Subtitles, primary = true) { vm.generateTranscript(epId) }
                     }
                     is TxState.Generating -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -430,7 +433,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
                         }
                         Column(Modifier.weight(1f).padding(vertical = 10.dp).padding(end = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             if (line.who.isNotBlank()) Text(line.who, style = MaterialTheme.typography.labelLarge, color = LColors.Text3, fontSize = 12.sp)
-                            Text(highlight(line.text, q), style = MaterialTheme.typography.bodyLarge)
+                            Text(highlight(line.text, q), style = MaterialTheme.typography.bodyLarge.copy(fontSize = 20.sp, lineHeight = 30.sp))
                         }
                         if (syncMode && vm.showTimings) {
                             if (line.t >= 0) Box(
@@ -486,6 +489,7 @@ fun EpisodeScreen(vm: AppViewModel, epId: String, onBack: () -> Unit, openShow: 
 
 
 /** Controls shown while fixing timings by hand. Every change is saved on this device straight away. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SyncPanel(
     vm: AppViewModel, epId: String, isCurrent: Boolean, source: String, edit: TxEdit, untimed: Boolean, anchorCount: Int,
@@ -503,7 +507,7 @@ private fun SyncPanel(
         vm.saveTxEdit(epId, source, edit.shifted(from, to, sign * ms))
     }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(LColors.Surface).padding(14.dp),
+        Modifier.fillMaxWidth().card(24.dp).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Fix the timing", style = MaterialTheme.typography.titleSmall)
@@ -512,10 +516,10 @@ private fun SyncPanel(
             else "Move by an amount you choose, or play the episode and tap Set on the line you are hearing now. Two Sets far apart also fix drifting.",
             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
         )
-        if (!isCurrent) Text("Start playing this episode first, so Set knows the position.", style = MaterialTheme.typography.bodySmall, color = LColors.Red)
+        if (!isCurrent) Text("Start playing this episode first, so Set knows the position.", style = MaterialTheme.typography.bodySmall, color = LColors.Err)
 
         // move by any amount, earlier or later
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = amount, onValueChange = { onAmount(it.filter { c -> c.isDigit() || c == '.' || c == ',' }.take(7)) },
                 singleLine = true, label = { Text("Seconds") }, isError = ms == 0, modifier = Modifier.width(112.dp),
@@ -530,7 +534,7 @@ private fun SyncPanel(
         // what the move applies to
         if (selLine >= 0) {
             Text("Moving line ${selLine + 1} only. Tap the line again to go back to the whole transcript.", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("This line only", !tailScope) { onTailScope(false) }
                 Chip("This line and after", tailScope) { onTailScope(true) }
                 Chip("Whole transcript", false) { onClearSel() }
@@ -544,14 +548,14 @@ private fun SyncPanel(
             "Whole transcript moved ${if (whole > 0) "+" else ""}${"%.1f".format(whole)} s · ${edit.shifts.count { !(it.from == 0 && it.to == -1) }} partial moves · $anchorCount line${if (anchorCount == 1) "" else "s"} set",
             style = MaterialTheme.typography.labelSmall, color = LColors.Text3,
         )
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip("Reset all", false) { vm.saveTxEdit(epId, source, TxEdit()); onClearSel() }
         }
         Text(
             if (vm.timingIsShared(epId, source)) "Saved for everyone on your server, as well as on this phone." else "Saved on this phone only.",
             style = MaterialTheme.typography.labelSmall, color = LColors.Good,
         )
-        vm.timingSaveError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = LColors.Red) }
+        vm.timingSaveError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = LColors.Err) }
     }
 }
 
@@ -573,7 +577,7 @@ private fun PasteDialog(initial: String, onSave: (String) -> Unit, onRemove: (()
                     placeholder = { Text("Paste here…") }, shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
                 )
-                if (onRemove != null) TextButton(onClick = onRemove) { Text("Remove pasted text", color = LColors.Red) }
+                if (onRemove != null) TextButton(onClick = onRemove) { Text("Remove pasted text", color = LColors.Err) }
             }
         },
         confirmButton = { TextButton(onClick = { onSave(text) }, enabled = text.isNotBlank()) { Text("Save") } },

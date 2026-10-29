@@ -42,20 +42,23 @@ import app.leestn.data.Dates
 import app.leestn.data.StatsCalc
 import app.leestn.state.AppViewModel
 import app.leestn.ui.theme.LColors
+import java.time.LocalDate
 import java.util.Locale
 
 private val MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+private val MONTHS_FULL = listOf("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+private fun hourLabel(h: Int): String = when { h == 0 -> "12a"; h < 12 -> "${h}a"; h == 12 -> "12p"; else -> "${h - 12}p" }
 private val WDAYS = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 private val GENRE_COLORS = listOf(LColors.Chart1, LColors.Chart2, LColors.Chart3, LColors.Chart4)
 
 @Composable
 internal fun Panel(title: String, trailing: String? = null, content: @Composable () -> Unit) {
     Column(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(LColors.Surface).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             if (trailing != null) Text(trailing, style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
         }
         content()
@@ -83,31 +86,37 @@ fun ProfileScreen(
 
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
-            Column {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    IconButton(onClick = openSettings) { Icon(Icons.Rounded.Settings, "Settings") }
-                }
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.clickable(onClick = openEditProfile)) { MyAvatar(vm, 76.dp) }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(vm.displayName, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f, fill = false))
-                            FounderBadge(vm.myRole, size = 24.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                ScreenTitle("Profile", trailing = { IconButton(onClick = openSettings) { Icon(Icons.Rounded.Settings, "Settings") } })
+                Column(
+                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp).padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.clickable(onClick = openEditProfile)) { MyAvatar(vm, 76.dp) }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(vm.displayName, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f, fill = false))
+                                FounderBadge(vm.myRole, size = 24.dp)
+                            }
+                            FounderTag(vm.myRole)
+                            Text(
+                                if (vm.connected) "@${vm.serverHandle}" else "Only on this device",
+                                style = MaterialTheme.typography.labelMedium, color = LColors.Text3,
+                            )
                         }
-                        FounderTag(vm.myRole)
-                        Text(
-                            if (vm.connected) "@${vm.serverHandle}" else "Only on this device",
-                            style = MaterialTheme.typography.labelMedium, color = LColors.Text3,
-                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("ABOUT ME", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
                         Text(
                             vm.profileBio.ifBlank { "Add a short bio in Edit profile." },
                             style = MaterialTheme.typography.bodyMedium, color = if (vm.profileBio.isBlank()) LColors.Text3 else LColors.Text2,
                         )
                     }
-                }
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ActionPill("Edit profile", Icons.Rounded.Edit, onClick = openEditProfile)
-                    ActionPill("Year recap", Icons.Rounded.AutoAwesome, primary = true, onClick = openRecap)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ActionPill("Edit profile", Icons.Rounded.Edit, onClick = openEditProfile)
+                        ActionPill("Year recap", Icons.Rounded.AutoAwesome, primary = true, onClick = openRecap)
+                    }
                 }
             }
         }
@@ -129,15 +138,46 @@ fun ProfileScreen(
             item {
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        CountTile(st.n, "Episodes", Modifier.weight(1f))
-                        StatTile(String.format(Locale.US, "%.1f", st.mins / 60.0), "Hours", Modifier.weight(1f))
-                        StatTile(if (st.rated > 0) String.format(Locale.US, "%.1f", st.avg) else "–", "Avg rating", Modifier.weight(1f))
+                        ColorBlock("Episodes", st.n.toString(), LColors.Lilac, Modifier.weight(1f))
+                        ColorBlock("Hours", String.format(Locale.US, "%.1f", st.mins / 60.0), LColors.Mint, Modifier.weight(1f))
+                        ColorBlock("Avg rating", if (st.rated > 0) String.format(Locale.US, "%.1f", st.avg) else "–", LColors.Sky, Modifier.weight(1f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        CountTile(st.pods.size, "Shows", Modifier.weight(1f))
-                        CountTile(st.sides, "Side episodes", Modifier.weight(1f))
-                        CountTile(st.bestStreak, "Day streak", Modifier.weight(1f))
+                        ColorBlock("Shows", st.pods.size.toString(), LColors.Sky, Modifier.weight(1f))
+                        ColorBlock("Side eps", st.sides.toString(), LColors.Lilac, Modifier.weight(1f))
+                        ColorBlock("Best streak", st.bestStreak.toString(), LColors.Mint, Modifier.weight(1f))
                     }
+                }
+            }
+            item {
+                val dayset = remember(log) { log.values.mapNotNull { it.d }.toSet() }
+                StreakCard(Streaks.current(dayset), Streaks.week(dayset), Modifier.padding(horizontal = 16.dp), onClick = openBadges)
+            }
+            item {
+                val now = LocalDate.now()
+                val mi = now.monthValue - 1
+                val cur = if (st.year == now.year.toString()) st.months[mi] else -1
+                val prev = if (st.year == now.year.toString() && mi > 0) st.months[mi - 1] else 0
+                if (cur >= 0) Panel("This month", MONTHS_FULL[mi]) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Chip(Dates.hours(cur), true) {}
+                        changeText(cur, prev)?.let { Chip(it, false) {} }
+                    }
+                    Text(
+                        if (cur == 0) "Nothing logged yet this month." else "You listened for ${Dates.hours(cur)} so far this month.",
+                        style = MaterialTheme.typography.bodyMedium, color = LColors.Text2,
+                    )
+                }
+            }
+            item {
+                val hours = remember(log, year) {
+                    val a = FloatArray(24)
+                    log.values.forEach { l -> val d = l.d; if (d != null && (year == "all" || Dates.year(d) == year) && l.h in 0..23) a[l.h] += 1f }
+                    a.toList()
+                }
+                val peakH = hours.indices.maxByOrNull { hours[it] } ?: 0
+                Panel("Peak hours", if (hours.max() > 0f) hourLabel(peakH) else null) {
+                    BarChart(hours, (0..23).map { if (it % 6 == 0) hourLabel(it) else "" }, highlight = if (hours.max() > 0f) peakH else null, format = { "${it.toInt()} eps" })
                 }
             }
             item {
@@ -182,13 +222,13 @@ fun ProfileScreen(
                 }
             }
             item {
-                Panel("Top shows") {
+                Panel("Top shows", "Leaderboard") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         st.pods.take(5).forEachIndexed { rank, x ->
                             val tintX = rememberArtTint(showOf(x.pid).artworkUrl)
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("${rank + 1}", style = MaterialTheme.typography.headlineSmall, color = if (rank == 0) LColors.Red else LColors.Text3, modifier = Modifier.width(26.dp))
-                                Poster(showOf(x.pid), Modifier.width(42.dp), corner = 8.dp)
+                                Text("${rank + 1}", style = MaterialTheme.typography.headlineSmall, color = if (rank == 0) LColors.Accent else LColors.Text3, modifier = Modifier.width(30.dp))
+                                Poster(showOf(x.pid), Modifier.width(48.dp), corner = 14.dp)
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(showOf(x.pid).name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -206,7 +246,7 @@ fun ProfileScreen(
                 Panel("Highest rated") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         st.top.forEach { r ->
-                            Row(Modifier.fillMaxWidth().clickable { openEp(r.ep.id) }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { openEp(r.ep.id) }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Poster(showOf(r.ep.pid), Modifier.width(36.dp), corner = 8.dp)
                                 Column(Modifier.weight(1f)) {
                                     Text(r.ep.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

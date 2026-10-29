@@ -13,21 +13,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// Trakt-inspired palette: near-black canvas, slightly lifted cards, one strong red.
+// Deep ink-violet canvas, soft lifted cards, one vivid violet accent. Mint, lilac and sky are the colour blocks for stats.
+// Names Red/RedDark/RedSoft are kept so older code keeps working: they now mean the accent colour. Use Err for errors.
 object LColors {
-    val Bg = Color(0xFF101010)
-    val Surface = Color(0xFF1B1B1B)
-    val Surface2 = Color(0xFF262626)
-    val Surface3 = Color(0xFF313131)
-    val Line = Color(0xFF2C2C2C)
-    val Text = Color(0xFFF2F2F2)
-    val Text2 = Color(0xFFBDBDBD)
-    val Text3 = Color(0xFF8A8A8A)
-    val Red = Color(0xFFED1C24)
-    val RedDark = Color(0xFFB5161C)
-    val RedSoft = Color(0x33ED1C24)
-    val Side = Color(0xFF9B8CFF)
-    val SideSoft = Color(0x339B8CFF)
+    val Bg = Color(0xFF121117)
+    val Surface = Color(0xFF1C1A24)
+    val Surface2 = Color(0xFF26232F)
+    val Surface3 = Color(0xFF353141)
+    val Line = Color(0xFF2D2A38)
+    val Text = Color(0xFFF5F4FA)
+    val Text2 = Color(0xFFBDBACB)
+    val Text3 = Color(0xFF8F8C9E)
+    val Accent = Color(0xFF7B5CF5)
+    val AccentDark = Color(0xFF5B3FD0)
+    val AccentSoft = Color(0x337B5CF5)
+    val Red = Accent
+    val RedDark = AccentDark
+    val RedSoft = AccentSoft
+    val Err = Color(0xFFFF6B6B)
+    val Mint = Color(0xFF4DEBC4)
+    val Lilac = Color(0xFFC59BFF)
+    val Sky = Color(0xFF4F8DFF)
+    val Side = Mint
+    val SideSoft = Color(0x334DEBC4)
     val Good = Color(0xFF4FD39A)
     val Chart1 = Color(0xFF3987E5)
     val Chart2 = Color(0xFFD95926)
@@ -37,9 +45,9 @@ object LColors {
 }
 
 private val Scheme = darkColorScheme(
-    primary = LColors.Red,
+    primary = LColors.Accent,
     onPrimary = Color.White,
-    secondary = LColors.Side,
+    secondary = LColors.Mint,
     background = LColors.Bg,
     onBackground = LColors.Text,
     surface = LColors.Surface,
@@ -68,9 +76,9 @@ private val LTypography = Typography(
 )
 
 private val LShapes = Shapes(
-    small = RoundedCornerShape(6.dp),
-    medium = RoundedCornerShape(10.dp),
-    large = RoundedCornerShape(14.dp),
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp),
 )
 
 @Composable

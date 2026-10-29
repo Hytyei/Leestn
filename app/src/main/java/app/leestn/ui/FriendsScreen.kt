@@ -58,15 +58,17 @@ import kotlinx.coroutines.delay
 fun FeedItem(vm: AppViewModel, e: RFeedItem, openItem: (RFeedItem) -> Unit, openPerson: (String) -> Unit) {
     val show = Podcast(e.showId, e.showName.ifBlank { "Podcast" }, "", "", "", e.feedUrl, e.showArt)
     Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).padding(14.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).padding(14.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(Modifier.clickable { openPerson(e.handle) }) { PersonAvatar(vm, e.handle, e.name, e.avatarV, 40.dp) }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(buildAnnotatedString {
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(e.name.ifBlank { e.handle }) }
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(if (e.mine) "You" else e.name.ifBlank { e.handle }) }
                 if (e.role == "founder") withStyle(SpanStyle(color = FounderGold, fontWeight = FontWeight.Bold)) { append(" ✔") }
-                append(if (e.rating != null) " rated an episode ${e.rating}/10" else " listened to an episode")
+                val verb = if (e.rating != null) " rated an episode ${e.rating}/10" else " listened to an episode"
+                append(if (e.mine) " " + verb.trim() else verb)
+                if (e.minutes > 0) append(" · ${Dates.dur(e.minutes)}")
             }, style = MaterialTheme.typography.bodyMedium)
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(LColors.Surface2).clickable { openItem(e) }.padding(10.dp),
@@ -87,7 +89,7 @@ fun FeedItem(vm: AppViewModel, e: RFeedItem, openItem: (RFeedItem) -> Unit, open
 @Composable
 private fun PersonRow(vm: AppViewModel, f: RPerson, openPerson: (String) -> Unit) {
     Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clickable { openPerson(f.handle) }.padding(vertical = 8.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).clickable { openPerson(f.handle) }.padding(12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PersonAvatar(vm, f.handle, f.name, f.avatarV, 42.dp)
@@ -110,12 +112,12 @@ fun InviteCard(vm: AppViewModel, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     Column(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).padding(14.dp),
+        modifier.fillMaxWidth().card(24.dp).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Invite friends", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Send this code to a friend. In Leestn they open Settings, choose Join with a code, and paste it. They get transcripts from your server and can follow you.",
+            "Send this link to a friend. In Leestn they open Settings, choose Join with a code, and paste it. They can then add and follow you. It does not give access to Whisper transcription, which stays invite only.",
             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
         )
         Text(
@@ -141,16 +143,16 @@ fun InviteCard(vm: AppViewModel, modifier: Modifier = Modifier) {
 @Composable
 fun FriendsScreen(vm: AppViewModel, openItem: (RFeedItem) -> Unit, openPerson: (String) -> Unit, openSettings: () -> Unit) {
     if (!vm.connected) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Friends", style = MaterialTheme.typography.headlineMedium)
+        Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            ScreenTitle("Friends", subtitle = "See what people you follow listen to")
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(LColors.Surface).padding(20.dp).appear(),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp, LColors.Surface).padding(20.dp).appear(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Icon(Icons.Rounded.Groups, null, tint = LColors.Red)
+                Icon(Icons.Rounded.Groups, null, tint = LColors.Accent)
                 Text("Friends live on a Leestn server", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "There is no company server. You and your friends meet on a small server that one of you hosts for free on Cloudflare. It also generates transcripts for episodes that don't have one. Join with a code from a friend, or set up your own.",
+                    "There is no company server. You and your friends meet on a small server that one of you hosts for free on Cloudflare. Anyone can join with a code and add friends. Transcripts from the Whisper server are invite only. Join with a code from a friend, or set up your own.",
                     style = MaterialTheme.typography.bodyMedium, color = LColors.Text2,
                 )
                 ActionPill("Set up or join a server", Icons.Rounded.Groups, primary = true, onClick = openSettings)
@@ -172,12 +174,9 @@ fun FriendsScreen(vm: AppViewModel, openItem: (RFeedItem) -> Unit, openPerson: (
 
     LazyColumn(contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Friends", style = MaterialTheme.typography.headlineMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip("Feed", tab == "feed") { tab = "feed" }
-                    Chip("People", tab == "people") { tab = "people" }
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                ScreenTitle("Friends", subtitle = if (tab == "feed") "What you and your friends listened to" else "Find and follow people")
+                PillTabs(listOf("Feed", "People"), if (tab == "feed") 0 else 1, { tab = if (it == 0) "feed" else "people" }, icons = listOf(Icons.Rounded.Groups, Icons.Rounded.Search))
             }
         }
         if (tab == "feed") {
@@ -197,7 +196,7 @@ fun FriendsScreen(vm: AppViewModel, openItem: (RFeedItem) -> Unit, openPerson: (
                     value = query, onValueChange = { query = it }, singleLine = true, modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
                     placeholder = { Text("Search by name or @username") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
                     shape = RoundedCornerShape(99.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Accent, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Accent),
                 )
             }
             val load = vm.peopleLoad
@@ -206,7 +205,7 @@ fun FriendsScreen(vm: AppViewModel, openItem: (RFeedItem) -> Unit, openPerson: (
                 load is Load.Busy && vm.people.isEmpty() -> item { Spinner(Modifier.fillMaxWidth().padding(24.dp)) }
                 vm.people.isEmpty() -> item {
                     Text(
-                        if (query.isBlank()) "No one else has joined yet. Share your invite code above." else "No one matches that.",
+                        if (query.isBlank()) "No one else has joined yet. Friends can sign up in the app and then find you here." else "No one matches that.",
                         color = LColors.Text3, modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }

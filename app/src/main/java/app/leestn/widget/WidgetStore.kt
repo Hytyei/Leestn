@@ -13,7 +13,7 @@ import android.graphics.Shader
 import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.drawable.toBitmap
 import androidx.glance.appwidget.updateAll
-import coil.ImageLoader
+import coil.Coil
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import org.json.JSONArray
@@ -24,12 +24,18 @@ data class WNow(val id: String, val title: String, val show: String, val art: St
     val frac: Float get() = if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
 }
 
-data class WItem(val id: String, val title: String, val show: String, val art: String, val sub: String, val frac: Float)
+data class WItem(val id: String, val title: String, val show: String, val art: String, val sub: String, val frac: Float, val leftMin: Int = 0)
+
+/** The show listened to last and what you did with it. [when] is a short phrase such as "2 days ago"; [rating] is 0 when unrated. */
+data class WLast(
+    val epId: String, val epTitle: String, val show: String, val art: String, val `when`: String,
+    val showEps: Int, val showMin: Int, val rating: Int, val showAvg: String, val streak: Int,
+)
 
 /** [week] is minutes listened on each of the last 7 days, oldest first. */
 data class WStats(val year: String, val hours: String, val episodes: Int, val streak: Int, val avg: String, val week: List<Int> = List(7) { 0 })
 
-data class WSnapshot(val now: WNow?, val cont: List<WItem>, val fresh: List<WItem>, val stats: WStats?)
+data class WSnapshot(val now: WNow?, val cont: List<WItem>, val fresh: List<WItem>, val stats: WStats?, val last: WLast? = null)
 
 object WidgetStore {
     private const val PREFS = "leestn_widget"
@@ -51,6 +57,12 @@ object WidgetStore {
                         it.optJSONArray("week")?.let { a -> List(a.length()) { i -> a.optInt(i) } } ?: List(7) { 0 },
                     )
                 },
+                last = j.optJSONObject("last")?.let {
+                    WLast(
+                        it.optString("epId"), it.optString("epTitle"), it.optString("show"), it.optString("art"), it.optString("when"),
+                        it.optInt("showEps"), it.optInt("showMin"), it.optInt("rating"), it.optString("showAvg"), it.optInt("streak"),
+                    )
+                },
             )
         } catch (e: Exception) {
             WSnapshot(null, emptyList(), emptyList(), null)
@@ -62,7 +74,7 @@ object WidgetStore {
         val out = ArrayList<WItem>()
         for (i in 0 until a.length()) {
             val o = a.getJSONObject(i)
-            out.add(WItem(o.getString("id"), o.getString("title"), o.optString("show"), o.optString("art"), o.optString("sub"), o.optDouble("frac", 0.0).toFloat()))
+            out.add(WItem(o.getString("id"), o.getString("title"), o.optString("show"), o.optString("art"), o.optString("sub"), o.optDouble("frac", 0.0).toFloat(), o.optInt("left", 0)))
         }
         return out
     }
@@ -73,10 +85,14 @@ object WidgetStore {
             j.put("now", JSONObject().put("id", it.id).put("title", it.title).put("show", it.show).put("art", it.art).put("playing", it.playing).put("pos", it.pos).put("dur", it.dur))
         }
         fun arr(l: List<WItem>) = JSONArray().also { a ->
-            l.forEach { a.put(JSONObject().put("id", it.id).put("title", it.title).put("show", it.show).put("art", it.art).put("sub", it.sub).put("frac", it.frac.toDouble())) }
+            l.forEach { a.put(JSONObject().put("id", it.id).put("title", it.title).put("show", it.show).put("art", it.art).put("sub", it.sub).put("frac", it.frac.toDouble()).put("left", it.leftMin)) }
         }
         j.put("cont", arr(s.cont)).put("fresh", arr(s.fresh))
         s.stats?.let { j.put("stats", JSONObject().put("year", it.year).put("hours", it.hours).put("episodes", it.episodes).put("streak", it.streak).put("avg", it.avg).put("week", JSONArray(it.week))) }
+        s.last?.let {
+            j.put("last", JSONObject().put("epId", it.epId).put("epTitle", it.epTitle).put("show", it.show).put("art", it.art).put("when", it.`when`)
+                .put("showEps", it.showEps).put("showMin", it.showMin).put("rating", it.rating).put("showAvg", it.showAvg).put("streak", it.streak))
+        }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("snap", j.toString()).apply()
     }
 
@@ -104,6 +120,7 @@ object WidgetStore {
         ContinueWidget().updateAll(ctx)
         NewEpisodesWidget().updateAll(ctx)
         StatsWidget().updateAll(ctx)
+        LastActivityWidget().updateAll(ctx)
     }
 }
 
@@ -114,14 +131,14 @@ object WidgetStore {
  */
 object WidgetArt {
     private const val MAX_AREA = 240_000.0
-    val RED: Int = 0xFFED1C24.toInt()
-    val BG: Int = 0xFF0E0E10.toInt()
+    val RED: Int = 0xFF7B5CF5.toInt() // the app's violet accent
+    val BG: Int = 0xFF121117.toInt()
 
     suspend fun bitmap(ctx: Context, url: String, px: Int = 256): Bitmap? {
         if (url.isBlank()) return null
         return try {
             val req = ImageRequest.Builder(ctx).data(url).size(px).allowHardware(false).build()
-            (ImageLoader(ctx).execute(req) as? SuccessResult)?.drawable?.toBitmap()
+            (Coil.imageLoader(ctx).execute(req) as? SuccessResult)?.drawable?.toBitmap()
         } catch (e: Exception) {
             null
         }
@@ -200,7 +217,7 @@ object WidgetArt {
         val rect = RectF(0f, 0f, d.w.toFloat(), d.h.toFloat())
         val p = paint()
         if (src == null || src.width < 1 || src.height < 1) {
-            p.shader = LinearGradient(0f, 0f, d.w.toFloat(), d.h.toFloat(), mix(0xFF7A1B4B.toInt(), tint, 0.3f), 0xFF1B1030.toInt(), Shader.TileMode.CLAMP)
+            p.shader = LinearGradient(0f, 0f, d.w.toFloat(), d.h.toFloat(), mix(0xFF3A2A7A.toInt(), tint, 0.3f), 0xFF1A1626.toInt(), Shader.TileMode.CLAMP)
         } else {
             val shader = BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
             val scale = maxOf(d.w.toFloat() / src.width, d.h.toFloat() / src.height)

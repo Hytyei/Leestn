@@ -23,7 +23,12 @@ r = await call(env, "PUT", "/v1/sync", A, { log, showRatings: [{ showId: "s1", s
 r = await call(env, "PUT", "/v1/sync", B, { log: [{ epId: "s1_a1", showId: "s1", showName: "Show One", epTitle: "Ep 1", minutes: 40, listenedAt: "2026-10-12", rating: 10 }] }); ok("push bob", r.s === 200, r);
 
 r = await call(env, "POST", "/v1/follow/alice", B); ok("bob follows alice", r.s === 200, r);
-r = await call(env, "GET", "/v1/feed", B); ok("feed has alice items", r.s === 200 && r.j.items.length >= 1 && r.j.items[0].user.handle === "alice", r);
+r = await call(env, "GET", "/v1/feed", B); ok("feed has alice items", r.s === 200 && r.j.items.filter((i: any) => i.user.handle === "alice").length === 2, r);
+// (changed in 1.6.0: the feed now also holds the viewer's own listens)
+ok("feed also holds my own listen, marked mine, with minutes and rating", r.j.items.some((i: any) => i.mine === true && i.user.handle === "bob" && i.minutes === 40 && i.rating === 10), r);
+ok("friends' items are not marked mine and carry minutes", r.j.items.filter((i: any) => i.user.handle === "alice").every((i: any) => i.mine === false && i.minutes > 0), r);
+r = await call(env, "GET", "/v1/feed", A); ok("alice's feed holds her own two listens but not bob's (she does not follow him)", r.s === 200 && r.j.items.length === 2 && r.j.items.every((i: any) => i.mine === true), r);
+r = await call(env, "GET", "/v1/feed", B);
 r = await call(env, "GET", "/v1/users?q=ali", B); ok("search people", r.s === 200 && r.j.users.some((u: any) => u.handle === "alice" && u.following === true), r);
 r = await call(env, "GET", "/v1/users/alice", B); ok("profile alice", r.s === 200 && r.j.stats.episodes === 2 && r.j.isFollowing === true, r);
 r = await call(env, "GET", "/v1/shows/s1/ratings", B); ok("group ratings", r.s === 200 && r.j.episodes["s1_a1"].avg === 9 && r.j.showAvg === 9, r);

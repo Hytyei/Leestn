@@ -3,7 +3,7 @@ import { HttpError, cors, json } from "./util";
 import { consume, getTranscript, getUsage, putTiming, requestTranscript } from "./transcripts";
 import { authConfig, googleAuth, linkGoogle, unlinkGoogle } from "./google";
 import {
-  createUser, deleteAvatar, deleteMe, feed, follow, getAvatar, me, patchMe, profile, pull, push, putAvatar, searchUsers, showRatings, wrapped,
+  createUser, unlockTranscription, deleteAvatar, deleteMe, feed, follow, getAvatar, me, patchMe, profile, pull, push, putAvatar, searchUsers, showRatings, wrapped,
 } from "./users";
 
 async function route(req: Request, env: Env): Promise<Response> {
@@ -12,7 +12,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   const m = req.method;
   let r: RegExpMatchArray | null;
 
-  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.9" });
+  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.6.0" });
 
   // Transcripts (invite key or account token)
   if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
@@ -23,6 +23,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   // Google sign-in
   if (p === "/v1/auth/config" && m === "GET") return authConfig(env);
   if (p === "/v1/auth/google" && m === "POST") return googleAuth(env, req);
+  if (p === "/v1/me/unlock" && m === "POST") return unlockTranscription(env, req);
   if (p === "/v1/me/google" && m === "POST") return linkGoogle(env, req);
   if (p === "/v1/me/google" && m === "DELETE") return unlinkGoogle(env, req);
 

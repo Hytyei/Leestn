@@ -28,6 +28,11 @@ import app.leestn.ui.Motion
 import app.leestn.ui.BadgeToast
 import app.leestn.ui.BadgesScreen
 import app.leestn.ui.MiniPlayer
+import app.leestn.ui.Dock
+import app.leestn.ui.DockTab
+import app.leestn.ui.MyAvatar
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import app.leestn.ui.NavIcon
 import app.leestn.ui.NowPlayingSheet
 import app.leestn.ui.OnboardingScreen
@@ -232,30 +237,22 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
                     ) {
                         if (meta != null) MiniPlayer(vm, meta) { playerOpen = true }
                     }
-                    HorizontalDivider(color = LColors.Line)
-                    NavigationBar(containerColor = LColors.Bg, tonalElevation = 0.dp) {
-                        val selected = when {
-                            onTab -> route
-                            route.startsWith("show:") || route.startsWith("ep:") -> stack.lastOrNull { it in TAB_ROUTES } ?: "home"
-                            route.startsWith("list:") -> "lists"
-                            route.startsWith("person:") -> "friends"
-                            route == "badges" || route == "editprofile" || route == "settings" -> "profile"
-                            route == "downloads" -> "lists"
-                            else -> "home"
-                        }
-                        TABS.forEach { t ->
-                            NavigationBarItem(
-                                selected = selected == t.route,
-                                onClick = { goTab(t.route) },
-                                icon = { NavIcon(t.icon, t.label, selected == t.route) },
-                                label = { Text(t.label, style = MaterialTheme.typography.labelSmall) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = LColors.Red, selectedTextColor = LColors.Red,
-                                    unselectedIconColor = LColors.Text3, unselectedTextColor = LColors.Text3,
-                                    indicatorColor = LColors.RedSoft,
-                                ),
-                            )
-                        }
+                    val selected = when {
+                        onTab -> route
+                        route.startsWith("show:") || route.startsWith("ep:") -> stack.lastOrNull { it in TAB_ROUTES } ?: "home"
+                        route.startsWith("list:") -> "lists"
+                        route.startsWith("person:") -> "friends"
+                        route == "badges" || route == "editprofile" || route == "settings" -> "profile"
+                        route == "downloads" -> "lists"
+                        else -> "home"
+                    }
+                    Dock(TABS.map { DockTab(it.route, it.label, it.icon) }, selected, onSelect = { goTab(it) }) { r, on ->
+                        if (r == "profile") {
+                            Box(
+                                Modifier.size(32.dp).clip(CircleShape).border(2.dp, if (on) LColors.Accent else Color.Transparent, CircleShape).padding(2.dp),
+                            ) { MyAvatar(vm, 28.dp) }
+                            true
+                        } else false
                     }
                 }
             }
@@ -286,7 +283,7 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
                         vm, openShow = ::openShow, openEp = ::openEp,
                         openItem = { openRemote(it.epId, it.showId, it.showName, it.showArt, it.feedUrl) }, openPerson = { push("person:$it") },
                         goFriends = { goTab("friends") }, goDiscover = { goTab("discover") },
-                        openSettings = { push("settings") },
+                        openSettings = { push("settings") }, goProfile = { goTab("profile") },
                     )
                     r == "discover" -> DiscoverScreen(vm) { openShow(it) }
                     r == "lists" -> ListsScreen(vm, openList = { push("list:$it") }, openDownloads = { push("downloads") })

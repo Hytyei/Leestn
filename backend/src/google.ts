@@ -1,6 +1,6 @@
 import type { Env } from "./types";
 import { HttpError, bearer, body, json, randomToken, safeEqual, sha256Hex, str } from "./util";
-import { authed, issueToken, pubUser, USER_COLS, type User } from "./users";
+import { authed, issueToken, pubUser, signupAccess, USER_COLS, type User } from "./users";
 
 // Sign in with Google. The app gets a Google ID token on the phone and sends it here. We check Google's signature,
 // that the token was made for this server's Google client (GOOGLE_CLIENT_ID), and that it has not expired.
@@ -60,7 +60,7 @@ export async function verifyGoogleToken(env: Env, idToken: string): Promise<Goog
 
 /** What the app needs to start Google sign-in. The client id is public. */
 export async function authConfig(env: Env): Promise<Response> {
-  return json(env, { google: !!env.GOOGLE_CLIENT_ID, googleClientId: env.GOOGLE_CLIENT_ID || "" });
+  return json(env, { google: !!env.GOOGLE_CLIENT_ID, googleClientId: env.GOOGLE_CLIENT_ID || "", openSignup: (env.SIGNUPS || "").toLowerCase() !== "invite" });
 }
 
 const SELECT_BY_SUB = `SELECT ${USER_COLS} FROM users WHERE google_sub = ?`;
@@ -68,7 +68,7 @@ const SELECT_BY_SUB = `SELECT ${USER_COLS} FROM users WHERE google_sub = ?`;
 /**
  * Sign in or sign up with Google.
  * - A Google account that is already linked: signs in (a new token for this device). No invite key needed.
- * - Otherwise, with a handle and the server's invite key: creates the account.
+ * - Otherwise, with a handle: creates the account (open sign-up; the invite key, if sent, also unlocks transcription).
  * - Otherwise: answers 404 with needsHandle so the app can ask for a username.
  */
 export async function googleAuth(env: Env, req: Request): Promise<Response> {
@@ -81,8 +81,7 @@ export async function googleAuth(env: Env, req: Request): Promise<Response> {
   }
   const handle = str(b.handle, 30).trim().toLowerCase().replace(/^@/, "");
   if (!handle) return json(env, { error: "No Leestn account is linked to this Google account yet. Choose a username to create one.", needsHandle: true }, 404);
-  if (!env.INVITE_KEY) throw new HttpError(500, "This server has no INVITE_KEY yet");
-  if (!safeEqual(bearer(req), env.INVITE_KEY)) throw new HttpError(401, "Missing or wrong invite key");
+  const canTranscribe = await signupAccess(env, req);
   if (!/^[a-z0-9_]{3,30}$/.test(handle)) throw new HttpError(400, "Handle must be 3 to 30 letters, numbers or underscores");
   const name = str(b.name, 60).trim() || id.name || handle;
   const bio = str(b.bio, 300);
@@ -90,8 +89,8 @@ export async function googleAuth(env: Env, req: Request): Promise<Response> {
   const uid = crypto.randomUUID();
   try {
     await env.DB.prepare(
-      "INSERT INTO users (id, handle, name, bio, genres, token_hash, created_at, google_sub, google_email) VALUES (?, ?, ?, ?, '[]', ?, ?, ?, ?)",
-    ).bind(uid, handle, name, bio, await sha256Hex(token), Date.now(), id.sub, id.email).run();
+      "INSERT INTO users (id, handle, name, bio, genres, token_hash, created_at, google_sub, google_email, can_transcribe) VALUES (?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)",
+    ).bind(uid, handle, name, bio, await sha256Hex(token), Date.now(), id.sub, id.email, canTranscribe).run();
   } catch {
     throw new HttpError(409, "That handle is taken");
   }

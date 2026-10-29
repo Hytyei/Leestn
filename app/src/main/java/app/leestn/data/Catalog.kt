@@ -59,7 +59,7 @@ object Catalog {
         val tmp = File(d, hint.id + ".tmp")
         try {
             Http.download(hint.feedUrl, tmp)
-            val parsed = tmp.inputStream().use { FeedReader.read(it) }
+            val parsed = tmp.inputStream().use { FeedReader.read(it, hint.feedUrl) }
             if (parsed.items.none { it.audioUrl.isNotBlank() }) throw IOException("No playable episodes in this feed")
             feedFile(hint.id).delete()
             tmp.renameTo(feedFile(hint.id))
@@ -79,7 +79,7 @@ object Catalog {
             if (!f.exists() || !u.exists()) continue
             try {
                 val hint = Podcast(id = id, name = "", host = "", genre = "", tagline = "", feedUrl = u.readText().trim())
-                val parsed = f.inputStream().use { FeedReader.read(it) }
+                val parsed = f.inputStream().use { FeedReader.read(it, hint.feedUrl) }
                 out.add(assemble(hint, parsed))
             } catch (e: Exception) {
                 // a corrupt cache file is simply ignored and fetched again later
@@ -98,7 +98,8 @@ object Catalog {
             genre = hint.genre.ifBlank { parsed.genre },
             tagline = Text.tagline(plain).ifBlank { hint.tagline },
             feedUrl = hint.feedUrl,
-            artworkUrl = hint.artworkUrl.ifBlank { parsed.imageUrl },
+            // the feed's cover, else the newest episode that has its own picture, so a feed without a channel image still gets art
+            artworkUrl = hint.artworkUrl.ifBlank { parsed.imageUrl }.ifBlank { res.episodes.firstOrNull { it.imageUrl.isNotBlank() }?.imageUrl ?: "" },
             eps = res.episodes,
             cats = res.cats,
             description = plain.ifBlank { hint.description },

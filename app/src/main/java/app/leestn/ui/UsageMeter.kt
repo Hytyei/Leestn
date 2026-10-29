@@ -37,7 +37,7 @@ fun UsageMeter(vm: AppViewModel, needMin: Double? = null, modifier: Modifier = M
     val used = if (u.limitMin > 0) (u.usedMin / u.limitMin).toFloat() else 1f
     val tooLong = needMin != null && needMin > u.remainingMin
     val color = when {
-        tooLong || used >= 1f -> LColors.Red
+        tooLong || used >= 1f -> LColors.Err
         used >= 0.8f -> Amber
         else -> LColors.Good
     }
@@ -55,10 +55,10 @@ fun UsageMeter(vm: AppViewModel, needMin: Double? = null, modifier: Modifier = M
         if (tooLong && needMin != null) {
             Text(
                 "This episode is about ${minutesText(needMin)} long, more than is left today. Try again after the reset, or choose a shorter episode.",
-                style = MaterialTheme.typography.bodySmall, color = LColors.Red,
+                style = MaterialTheme.typography.bodySmall, color = LColors.Err,
             )
         } else if (used >= 1f) {
-            Text("Today's free allowance is used up. Transcripts work again after the reset.", style = MaterialTheme.typography.bodySmall, color = LColors.Red)
+            Text("Today's free allowance is used up. Transcripts work again after the reset.", style = MaterialTheme.typography.bodySmall, color = LColors.Err)
         }
     }
 }

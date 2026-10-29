@@ -82,7 +82,7 @@ fun MiniPlayer(vm: AppViewModel, meta: NowMeta, onOpen: () -> Unit) {
     val tint = rememberArtTint(poster.artworkUrl)
     val btn = lerp(tint, Color.Black, 0.25f)
     val artScale by animateFloatAsState(if (vm.playing) 1f else 0.9f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "miniArt")
-    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 6.dp, bottom = 4.dp).clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.40f), LColors.Surface2))).clickable(onClick = onOpen)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 6.dp, bottom = 4.dp).clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.40f), LColors.Surface2))).clickable(onClick = onOpen)) {
         GlowBar(frac, color = tint, height = 2.dp, animate = false)
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Poster(poster, Modifier.width(40.dp).graphicsLayer { scaleX = artScale; scaleY = artScale }, corner = 8.dp)
@@ -90,7 +90,7 @@ fun MiniPlayer(vm: AppViewModel, meta: NowMeta, onOpen: () -> Unit) {
                 Text(meta.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     if (vm.playerError != null) "Playback problem. Tap to open." else if (vm.buffering) "Loading…" else "${meta.show} · ${Dates.clock(vm.t.toInt())}",
-                    style = MaterialTheme.typography.bodySmall, color = if (vm.playerError != null) LColors.Red else LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall, color = if (vm.playerError != null) LColors.Err else LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
             Equalizer(vm.playing, color = tint, height = 16.dp)
@@ -130,17 +130,17 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
     val btn = lerp(tint, Color.Black, 0.25f)
     // the cover swells while playing and settles back when paused
     val artScale by animateFloatAsState(if (vm.playing) 1f else 0.86f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "art")
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = LColors.Surface) {
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = LColors.Surface, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)) {
       Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.5f), LColors.Surface)))) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 24.dp).padding(top = 8.dp, bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Box(Modifier.fillMaxWidth(0.7f).graphicsLayer { scaleX = artScale; scaleY = artScale }.glow(tint, 36.dp, 0.55f)) {
-                Poster(poster, Modifier.fillMaxWidth(), corner = 24.dp)
+                Poster(poster, Modifier.fillMaxWidth(), corner = 28.dp)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(meta.title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(meta.title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Equalizer(vm.playing, color = tint, height = 12.dp)
                     Text(meta.show, style = MaterialTheme.typography.bodyMedium, color = LColors.Text2, textAlign = TextAlign.Center)
@@ -182,9 +182,9 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
                     }
                 }
             }
-            if (vm.playerError != null) Text("Playback problem: ${vm.playerError}", color = LColors.Red, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.animateContentSize()) {
-                ActionPill("Episode and transcript", Icons.Rounded.Subtitles) { onClose(); openEpisode(meta.id) }
+            if (vm.playerError != null) Text("Playback problem: ${vm.playerError}", color = LColors.Err, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+            Row(Modifier.fillMaxWidth().animateContentSize(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                ActionPill("Transcript", Icons.Rounded.Subtitles) { onClose(); openEpisode(meta.id) }
                 ActionPill("Show", Icons.Rounded.Podcasts) { onClose(); openShow(meta.pid) }
             }
         }

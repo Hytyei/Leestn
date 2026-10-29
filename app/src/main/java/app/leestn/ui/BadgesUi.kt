@@ -135,7 +135,7 @@ fun BadgeStrip(badges: List<BadgeProgress>, modifier: Modifier = Modifier) {
 @Composable
 private fun BadgeCard(p: BadgeProgress, modifier: Modifier = Modifier) {
     Column(
-        modifier.clip(RoundedCornerShape(18.dp)).background(LColors.Surface).padding(14.dp),
+        modifier.card(24.dp).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -151,7 +151,7 @@ private fun BadgeCard(p: BadgeProgress, modifier: Modifier = Modifier) {
         Text(p.def.desc, style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
         val next = p.nextGoal
         if (next != null) {
-            ThinBar(p.fraction, color = if (p.earned) tierColor(p.tier + 1) else LColors.Red)
+            ThinBar(p.fraction, color = if (p.earned) tierColor(p.tier + 1) else LColors.Accent)
             Text("${p.value} / $next ${p.def.unit}".trim(), style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
         } else {
             Text("${p.value} ${p.def.unit}".trim(), style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
@@ -173,8 +173,9 @@ fun BadgesScreen(vm: AppViewModel, onBack: () -> Unit) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-                Text("$earned OF ${badges.size} EARNED", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
-                Text("Your badges", style = MaterialTheme.typography.headlineMedium)
+                Text("Your badges", style = MaterialTheme.typography.displaySmall)
+                Text("$earned of ${badges.size} earned", style = MaterialTheme.typography.bodyMedium, color = LColors.Text3)
+                ThinBar(if (badges.isEmpty()) 0f else earned / badges.size.toFloat(), modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
             }
         }
         items(sorted, key = { it.def.id }) { p -> BadgeCard(p, Modifier.animateItem().appear()) }
@@ -194,8 +195,8 @@ fun BadgeToast(p: BadgeProgress, onDismiss: () -> Unit, onOpen: () -> Unit) {
     Row(
         Modifier.padding(horizontal = 16.dp).fillMaxWidth()
             .scale(0.9f + 0.1f * s.value)
-            .clip(RoundedCornerShape(20.dp)).background(LColors.Surface2)
-            .border(1.dp, tierColor(p.tier).copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp)).background(LColors.Surface2)
+            .border(1.dp, tierColor(p.tier).copy(alpha = 0.6f), RoundedCornerShape(24.dp))
             .pressable(onClick = onOpen).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

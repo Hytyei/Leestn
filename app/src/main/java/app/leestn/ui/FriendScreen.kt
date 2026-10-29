@@ -79,9 +79,9 @@ fun FriendScreen(
         }
         item {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CountTile(pr.episodes, "Episodes", Modifier.weight(1f))
-                StatTile(String.format(Locale.US, "%.1f", pr.hours), "Hours", Modifier.weight(1f))
-                StatTile(if (pr.avgRating != null) String.format(Locale.US, "%.1f", pr.avgRating) else "–", "Avg rating", Modifier.weight(1f))
+                ColorBlock("Episodes", "${pr.episodes}", LColors.Lilac, Modifier.weight(1f))
+                ColorBlock("Hours", String.format(Locale.US, "%.1f", pr.hours), LColors.Mint, Modifier.weight(1f))
+                ColorBlock("Avg rating", if (pr.avgRating != null) String.format(Locale.US, "%.1f", pr.avgRating) else "–", LColors.Sky, Modifier.weight(1f))
             }
         }
         if (pr.badges.isNotEmpty()) item {
@@ -94,13 +94,14 @@ fun FriendScreen(
         if (pr.topShows.isNotEmpty()) item {
             Panel("Most listened shows") {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    pr.topShows.take(6).forEach { sh ->
+                    pr.topShows.take(6).forEachIndexed { rank, sh ->
                         val stub = Podcast(sh.showId, sh.showName.ifBlank { "Podcast" }, "", "", "", sh.feedUrl, sh.showArt)
                         Row(
                             Modifier.fillMaxWidth().clickable { openRemote("", sh.showId, sh.showName, sh.showArt, sh.feedUrl) },
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            Poster(stub, Modifier.width(40.dp), corner = 8.dp)
+                            Text("${rank + 1}", style = MaterialTheme.typography.titleLarge, color = if (rank == 0) LColors.Accent else LColors.Text3, modifier = Modifier.width(24.dp))
+                            Poster(stub, Modifier.width(44.dp), corner = 12.dp)
                             Column(Modifier.weight(1f)) {
                                 Text(sh.showName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${sh.episodes} episode${if (sh.episodes == 1) "" else "s"} · ${Dates.hours(sh.minutes)}", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
@@ -120,7 +121,7 @@ fun FriendScreen(
                             Modifier.fillMaxWidth().clickable { openRemote("", sr.showId, sr.showName, sr.showArt, "") },
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            Poster(stub, Modifier.width(36.dp), corner = 8.dp)
+                            Poster(stub, Modifier.width(36.dp), corner = 12.dp)
                             Text(sr.showName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             RatingChip(sr.rating.toDouble())
                         }
@@ -138,7 +139,7 @@ fun FriendScreen(
                             Modifier.fillMaxWidth().clickable { openRemote(r.epId, r.showId, r.showName, r.showArt, r.feedUrl) },
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            Poster(stub, Modifier.width(36.dp), corner = 8.dp)
+                            Poster(stub, Modifier.width(36.dp), corner = 12.dp)
                             Column(Modifier.weight(1f)) {
                                 Text(r.epTitle.ifBlank { "Episode" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(r.showName + (if (r.listenedAt.length >= 10) " · " + Dates.rel(r.listenedAt.substring(0, 10)) else ""), style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)

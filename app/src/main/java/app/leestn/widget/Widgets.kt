@@ -63,11 +63,12 @@ import kotlin.coroutines.resumeWithException
 // Near-black surfaces tinted with each cover's colour, big rounded artwork and one red accent, like the app.
 // Gradients, rounded images, progress bars and charts are painted into bitmaps by WidgetArt (WidgetStore.kt).
 
-private val RED = ColorProvider(Color(0xFFED1C24))
+private val ACCENT = ColorProvider(Color(0xFF7B5CF5))
 private val TEXT = ColorProvider(Color(0xFFF4F4F6))
 private val DIM = ColorProvider(Color(0xFF8E8E99))
 private val WHITE = ColorProvider(Color.White)
-private val TRACK = ColorProvider(Color(0xFF26262E))
+private val TRACK = ColorProvider(Color(0xFF26232F))
+private val INK = ColorProvider(Color(0xFF121117))
 
 private fun mmss(sec: Int): String {
     val s = if (sec < 0) 0 else sec
@@ -214,7 +215,7 @@ class NowPlayingWidget : GlanceAppWidget() {
             val tall = size.height >= 130.dp
             val colRaw = size.width - pad * 2 - artSize - 12.dp
             val colW = if (colRaw < 40.dp) 40.dp else colRaw
-            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 24f, tint, d)
+            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 28f, tint, d)
             val cover = WidgetArt.roundedCrop(art, artSize.value, artSize.value, 18f, d, tint)
             val frac = now?.frac ?: sug?.second?.frac ?: 0f
             val pill = WidgetArt.progressPill(colW.value, 12f, frac, tint, d)
@@ -293,8 +294,8 @@ class MiniPlayerWidget : GlanceAppWidget() {
         val d = context.resources.displayMetrics.density
         provideContent {
             val size = LocalSize.current
-            val full = WidgetArt.roundedCrop(art, size.width.value, size.height.value, 24f, d, tint)
-            val scrim = WidgetArt.scrim(size.width.value, size.height.value, 24f, tint, d)
+            val full = WidgetArt.roundedCrop(art, size.width.value, size.height.value, 28f, d, tint)
+            val scrim = WidgetArt.scrim(size.width.value, size.height.value, 28f, tint, d)
             val barW = if (size.width - 24.dp < 20.dp) 20.dp else size.width - 24.dp
             val pill = WidgetArt.progressPill(barW.value, 10f, now?.frac ?: 0f, tint, d)
             Box(
@@ -348,7 +349,7 @@ class ContinueWidget : GlanceAppWidget() {
             val poster = if (raw < 56.dp) 56.dp else if (raw > 120.dp) 120.dp else raw
             val fit = ((size.width - pad * 2 + gap).value / (poster + gap).value).toInt()
             val n = if (fit < 1) 1 else if (fit > 6) 6 else fit
-            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 24f, base, d, 0.3f)
+            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 28f, base, d, 0.3f)
             Box(GlanceModifier.fillMaxSize()) {
                 Pic(bg, GlanceModifier.fillMaxSize())
                 Column(GlanceModifier.fillMaxSize().padding(pad)) {
@@ -375,8 +376,8 @@ class ContinueWidget : GlanceAppWidget() {
                                     }
                                     Text(item.title, maxLines = 1, style = TextStyle(color = TEXT, fontSize = 11.sp, fontWeight = FontWeight.Medium))
                                     if (resuming && item.frac > 0f) {
-                                        val left = Math.round((1f - item.frac) * 100f)
-                                        Text("$left% left", maxLines = 1, style = TextStyle(color = soft(tint), fontSize = 10.sp))
+                                        val left = if (item.leftMin > 0) (if (item.leftMin >= 60) "${item.leftMin / 60}h ${item.leftMin % 60}m left" else "${item.leftMin}m left") else "${Math.round((1f - item.frac) * 100f)}% left"
+                                        Text(left, maxLines = 1, style = TextStyle(color = soft(tint), fontSize = 10.sp))
                                     }
                                 }
                             }
@@ -409,7 +410,7 @@ class NewEpisodesWidget : GlanceAppWidget() {
         val base = list.firstOrNull()?.let { tints[it.id] } ?: WidgetArt.RED
         provideContent {
             val size = LocalSize.current
-            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 24f, base, d, 0.3f)
+            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 28f, base, d, 0.3f)
             Box(GlanceModifier.fillMaxSize()) {
                 Pic(bg, GlanceModifier.fillMaxSize())
                 Column(GlanceModifier.fillMaxSize().padding(12.dp)) {
@@ -485,7 +486,7 @@ class StatsWidget : GlanceAppWidget() {
             val inset = 14.dp
             val chartW = if (size.width - inset * 2 < 40.dp) 40.dp else size.width - inset * 2
             val ringSize = if (wide) 56.dp else 46.dp
-            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 24f, WidgetArt.RED, d, 0.22f)
+            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 28f, WidgetArt.RED, d, 0.22f)
             val chart = WidgetArt.weekChart(chartW.value, chartH.value, week, WidgetArt.RED, 5f, d)
             val ring = WidgetArt.ring(ringSize.value, lit, WidgetArt.RED, d)
             Box(GlanceModifier.fillMaxSize().clickable(open(context, "profile"))) {
@@ -493,7 +494,7 @@ class StatsWidget : GlanceAppWidget() {
                 Column(GlanceModifier.fillMaxSize().padding(inset)) {
                     Row(GlanceModifier.fillMaxWidth().defaultWeight(), verticalAlignment = Alignment.Top) {
                         Column(GlanceModifier.defaultWeight()) {
-                            Caps("${st?.year ?: ""} listening".trim(), RED)
+                            Caps("${st?.year ?: ""} listening".trim(), ACCENT)
                             Text(st?.hours ?: "0.0", style = TextStyle(color = TEXT, fontSize = if (wide) 34.sp else 30.sp, fontWeight = FontWeight.Bold))
                             Text("hours", style = TextStyle(color = DIM, fontSize = 11.sp))
                         }
@@ -520,7 +521,7 @@ class StatsWidget : GlanceAppWidget() {
                         letters.forEachIndexed { i, l ->
                             if (i > 0) Spacer(GlanceModifier.width(5.dp))
                             Box(GlanceModifier.defaultWeight(), contentAlignment = Alignment.Center) {
-                                Text(l, style = TextStyle(color = if (i == letters.size - 1) RED else DIM, fontSize = 9.sp, fontWeight = if (i == letters.size - 1) FontWeight.Bold else FontWeight.Normal))
+                                Text(l, style = TextStyle(color = if (i == letters.size - 1) ACCENT else DIM, fontSize = 9.sp, fontWeight = if (i == letters.size - 1) FontWeight.Bold else FontWeight.Normal))
                             }
                         }
                     }
@@ -529,6 +530,16 @@ class StatsWidget : GlanceAppWidget() {
         }
     }
 }
+
+@Composable
+private fun StatBlock(drawable: Int, value: String, label: String, modifier: GlanceModifier) {
+    Column(modifier.background(ImageProvider(drawable)).padding(horizontal = 8.dp, vertical = 6.dp)) {
+        Text(value, maxLines = 1, style = TextStyle(color = INK, fontSize = 17.sp, fontWeight = FontWeight.Bold))
+        Text(label, maxLines = 1, style = TextStyle(color = INK, fontSize = 10.sp, fontWeight = FontWeight.Medium))
+    }
+}
+
+private fun minText(m: Int): String = if (m >= 60) "${m / 60}h ${m % 60}m" else "${m}m"
 
 @Composable
 private fun StatLine(value: String, label: String) {
@@ -541,4 +552,59 @@ private fun StatLine(value: String, label: String) {
 
 class StatsReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StatsWidget()
+}
+
+// ---------- 6. last activity (4x2) ----------
+// The show you listened to last: its cover, when, and what you have done with it, in coloured stat blocks like the app.
+
+class LastActivityWidget : GlanceAppWidget() {
+    override val sizeMode: SizeMode = SizeMode.Exact
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val last = WidgetStore.read(context).last
+        val art = WidgetArt.bitmap(context, last?.art ?: "", 400)
+        val tint = WidgetArt.tint(art)
+        val d = context.resources.displayMetrics.density
+        provideContent {
+            val size = LocalSize.current
+            val pad = 12.dp
+            val coverRaw = size.height - pad * 2
+            val cover = if (coverRaw < 56.dp) 56.dp else if (coverRaw > size.width * 0.34f) size.width * 0.34f else coverRaw
+            val bg = WidgetArt.backdrop(size.width.value, size.height.value, 28f, tint, d, 0.36f)
+            val pic = WidgetArt.roundedCrop(art, cover.value, cover.value, 18f, d, tint)
+            Box(GlanceModifier.fillMaxSize().clickable(open(context, if (last != null) "ep:${last.epId}" else "discover"))) {
+                Pic(bg, GlanceModifier.fillMaxSize())
+                if (last == null) {
+                    Column(GlanceModifier.fillMaxSize().padding(pad), verticalAlignment = Alignment.CenterVertically, horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("No listening yet", style = TextStyle(color = TEXT, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                        Spacer(GlanceModifier.height(8.dp))
+                        Pill("Find a show", open(context, "discover"))
+                    }
+                } else {
+                    Row(GlanceModifier.fillMaxSize().padding(pad)) {
+                        Art(pic, cover)
+                        Spacer(GlanceModifier.width(12.dp))
+                        Column(GlanceModifier.defaultWeight().fillMaxHeight()) {
+                            Caps("Last listened \u00B7 ${last.`when`}", soft(tint))
+                            Text(last.show.ifBlank { "Podcast" }, maxLines = 1, style = TextStyle(color = TEXT, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+                            Text(last.epTitle, maxLines = 1, style = TextStyle(color = DIM, fontSize = 11.sp))
+                            Spacer(GlanceModifier.defaultWeight())
+                            Row(GlanceModifier.fillMaxWidth()) {
+                                StatBlock(R.drawable.widget_block_mint, "${last.showEps}", if (last.showEps == 1) "episode" else "episodes", GlanceModifier.defaultWeight())
+                                Spacer(GlanceModifier.width(6.dp))
+                                StatBlock(R.drawable.widget_block_lilac, minText(last.showMin), "listened", GlanceModifier.defaultWeight())
+                                Spacer(GlanceModifier.width(6.dp))
+                                val r = if (last.rating > 0) "${last.rating}/10" else if (last.showAvg.isNotBlank()) last.showAvg else "\u2013"
+                                StatBlock(R.drawable.widget_block_sky, r, if (last.rating > 0) "your rating" else "avg rating", GlanceModifier.defaultWeight())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+class LastActivityReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = LastActivityWidget()
 }

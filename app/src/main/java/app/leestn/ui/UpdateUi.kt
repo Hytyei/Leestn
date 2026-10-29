@@ -63,13 +63,13 @@ fun UpdateBanner(vm: AppViewModel, openSettings: () -> Unit, modifier: Modifier 
     val u = vm.update as? UpdateState.Available ?: return
     if (vm.dismissedUpdate == u.rel.version) return
     Row(
-        modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(14.dp)).background(LColors.Surface)
+        modifier.fillMaxWidth().padding(horizontal = 16.dp).card(24.dp, LColors.Surface2)
             .pressable(onClick = openSettings)
             .padding(start = 14.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(Icons.Rounded.SystemUpdate, null, tint = LColors.Red)
+        Icon(Icons.Rounded.SystemUpdate, null, tint = LColors.Accent)
         Column(Modifier.weight(1f)) {
             Text("Update ${u.rel.version} is ready", style = MaterialTheme.typography.titleSmall)
             Text("Tap to read what's new and install", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)

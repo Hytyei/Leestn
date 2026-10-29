@@ -42,16 +42,16 @@ fun AddToListSheet(vm: AppViewModel, item: ListItem, onDismiss: () -> Unit) {
     var newName by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = LColors.Surface) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Add to list", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 6.dp))
+            Text("Add to list", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = 6.dp))
             vm.lists.forEach { l ->
                 val on = vm.inList(l.id, item)
                 Row(
-                    Modifier.fillMaxWidth().clickable { vm.toggleInList(l.id, item) }.padding(vertical = 10.dp),
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (on) LColors.Accent.copy(alpha = 0.12f) else Color.Transparent).clickable { vm.toggleInList(l.id, item) }.padding(horizontal = 10.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Box(
-                        Modifier.size(22.dp).clip6().background(if (on) LColors.Red else Color.Transparent).border(1.5.dp, if (on) LColors.Red else LColors.Surface3, RoundedCornerShape(6.dp)),
+                        Modifier.size(24.dp).clip6().background(if (on) LColors.Accent else Color.Transparent).border(1.5.dp, if (on) LColors.Accent else LColors.Surface3, RoundedCornerShape(6.dp)),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (on) Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(15.dp))
@@ -67,12 +67,12 @@ fun AddToListSheet(vm: AppViewModel, item: ListItem, onDismiss: () -> Unit) {
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     placeholder = { Text("New list name") },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
+                    shape = RoundedCornerShape(99.dp),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Accent, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Accent),
                 )
                 Text(
                     "Create",
-                    modifier = Modifier.clip6().background(if (newName.isBlank()) LColors.Surface3 else LColors.Red)
+                    modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(if (newName.isBlank()) LColors.Surface3 else LColors.Accent)
                         .clickable(enabled = newName.isNotBlank()) { vm.createList(newName, item); newName = "" }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     color = Color.White, style = MaterialTheme.typography.labelLarge,

@@ -1,4 +1,4 @@
-﻿package app.leestn.state
+package app.leestn.state
 
 import android.app.Application
 import android.content.ComponentName
@@ -46,6 +46,7 @@ import app.leestn.data.BadgeProgress
 import app.leestn.data.Badges
 import app.leestn.data.Catalog
 import app.leestn.data.Kind
+import app.leestn.data.SideHint
 import app.leestn.data.Episode
 import app.leestn.data.Downloads
 import app.leestn.data.Genres
@@ -58,6 +59,7 @@ import app.leestn.data.Podcast
 import app.leestn.data.Sources
 import app.leestn.data.StatsCalc
 import app.leestn.widget.WItem
+import app.leestn.widget.WLast
 import app.leestn.widget.WNow
 import app.leestn.widget.WSnapshot
 import app.leestn.widget.WStats
@@ -134,6 +136,9 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     var googleEmail by mutableStateOf(prefs.getString("googleEmail", "") ?: "")
         private set
     /** "founder" shows a verified badge next to your name. Set on the server only. */
+    /** True when this account may use the server's Whisper transcription (needs the invite key once). Saved so it shows offline. */
+    var canTranscribe by mutableStateOf(prefs.getBoolean("canTranscribe", true))
+        private set
     var myRole by mutableStateOf(prefs.getString("myRole", "") ?: "")
         private set
     var serverBusy by mutableStateOf<Load>(Load.Idle)
@@ -300,7 +305,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** Refresh the free-Whisper meter. Never creates jobs or uses AI. */
     fun loadUsage() {
-        if (!connected) { usage = null; return }
+        if (!connected || !canTranscribe) { usage = null; return }
         val base = serverUrl
         val tok = serverToken
         viewModelScope.launch {
@@ -566,13 +571,13 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         val cont = prog.entries.mapNotNull { (id, secs) ->
             val ep = Catalog.episode(id) ?: return@mapNotNull null
             val frac = if (ep.durationSec > 0) secs.toFloat() / ep.durationSec else 0f
-            WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " Â· " + Dates.clock(secs) + " in", frac)
+            WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " · " + Dates.clock(secs) + " in", frac, maxOf(0, (ep.durationSec - secs) / 60))
         }.take(5)
         val fresh = subs.flatMap { pid -> Catalog.show(pid)?.eps?.take(6) ?: emptyList() }
             .filter { log[it.id]?.d == null && it.audioUrl.isNotBlank() }
             .sortedByDescending { it.date }
             .take(8)
-            .map { ep -> WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " Â· " + Dates.rel(ep.date), 0f) }
+            .map { ep -> WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " · " + Dates.rel(ep.date), 0f) }
         val year = Dates.today().substring(0, 4)
         val st = StatsCalc.compute(log.toMap(), year)
         val week = IntArray(7)
@@ -586,15 +591,40 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             if (st.rated > 0) String.format(java.util.Locale.US, "%.1f", st.avg) else "",
             week = week.toList(),
         )
-        return WSnapshot(now, cont, fresh, stats)
+        val latest = log.entries.filter { it.value.d != null && Catalog.episode(it.key) != null }.maxByOrNull { it.value.d!! }
+        val last = latest?.let { (id, l) ->
+            val ep = Catalog.episode(id)!!
+            val mine = log.entries.filter { it.value.d != null }.mapNotNull { Catalog.episode(it.key) }.filter { it.pid == ep.pid }
+            val idxs = log.values.mapNotNull { it.d }.map { Dates.idxOf(it) }.toSet()
+            var cur = Dates.todayIdx()
+            if (cur !in idxs) cur -= 1
+            var streak = 0
+            while (cur in idxs) { streak++; cur-- }
+            WLast(
+                ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), Dates.rel(l.d!!),
+                mine.size, mine.sumOf { it.min }, l.r ?: 0,
+                showAverage(ep.pid)?.let { String.format(java.util.Locale.US, "%.1f", it.first) } ?: "", streak,
+            )
+        }
+        return WSnapshot(now, cont, fresh, stats, last)
     }
 
     /** Keep enough about a show to restore it after a restart. */
     private fun remember(pid: String) {
-        if (stubs.containsKey(pid)) return
         val p = Catalog.show(pid) ?: return
         if (p.feedUrl.isBlank()) return
+        // a stub saved before the feed finished loading has no name or cover yet: complete it now
+        val old = stubs[pid]
+        if (old != null && old.artworkUrl.isNotBlank() && old.name.isNotBlank()) return
         stubs[pid] = Podcast(p.id, p.name, p.host, p.genre, p.tagline, p.feedUrl, p.artworkUrl)
+    }
+
+    /** After a feed loads, fill in the cover and name of a saved stub that was created from a bare link. */
+    private fun refreshStub(p: Podcast) {
+        val old = stubs[p.id] ?: return
+        if (old.artworkUrl.isNotBlank() && old.name.isNotBlank()) return
+        stubs[p.id] = Podcast(p.id, p.name.ifBlank { old.name }, p.host, p.genre, p.tagline, p.feedUrl, p.artworkUrl.ifBlank { old.artworkUrl })
+        save(widgets = false)
     }
 
     private fun rememberEp(id: String) {
@@ -782,6 +812,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             try {
                 val p = gate.withPermit { withContext(Dispatchers.IO) { Catalog.fetch(stub) } }
                 Catalog.register(p)
+                refreshStub(p)
                 fetchedAt[pid] = System.currentTimeMillis()
                 showLoad[pid] = Load.Done
                 pendingPlay?.let { id -> if (Catalog.episode(id) != null) { pendingPlay = null; play(id) } }
@@ -1039,7 +1070,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         val key = inviteKey.trim()
         if (!base.startsWith("https://")) { serverBusy = Load.Failed("The server address must start with https://"); return }
         if (!Regex("[a-z0-9_]{3,30}").matches(h)) { serverBusy = Load.Failed("Your username needs 3 to 30 letters, numbers or underscores"); return }
-        if (key.isBlank()) { serverBusy = Load.Failed("Enter the invite key"); return }
+        // The key is optional: without it you join as a friend and can unlock transcription later.
         val shown = name.trim().ifBlank { profileName }.ifBlank { h }
         serverBusy = Load.Busy
         viewModelScope.launch {
@@ -1156,7 +1187,11 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 val me = withContext(Dispatchers.IO) { Server.account(base, tok) }
                 myRole = me.role
                 googleEmail = me.googleEmail
-                prefs.edit().putString("myRole", me.role).putString("googleEmail", me.googleEmail).apply()
+                canTranscribe = me.canTranscribe
+                // The server is the source of truth for the username (it can be renamed there).
+                if (me.handle.isNotBlank()) serverHandle = me.handle
+                prefs.edit().putString("myRole", me.role).putString("googleEmail", me.googleEmail)
+                    .putBoolean("canTranscribe", me.canTranscribe).putString("serverHandle", serverHandle).apply()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -1179,17 +1214,46 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                 serverBusy = Load.Failed("Couldn't reach the server to delete your account here (${e.message}). Try again when you are online.")
                 return@launch
             }
-            serverUrl = ""; serverToken = ""; serverKey = ""; serverHandle = ""; googleEmail = ""; myRole = ""
+            serverUrl = ""; serverToken = ""; serverKey = ""; serverHandle = ""; googleEmail = ""; myRole = ""; canTranscribe = true
             dirtyEps.clear(); dirtyShows.clear()
             feedItems = emptyList(); people = emptyList(); profiles.clear(); group.clear(); transcripts.clear()
             feedLoad = Load.Idle; peopleLoad = Load.Idle
-            prefs.edit().remove("serverUrl").remove("serverToken").remove("serverKey").remove("serverHandle").remove("googleEmail").remove("myRole").remove("dirtyEps").remove("dirtyShows").apply()
+            prefs.edit().remove("serverUrl").remove("serverToken").remove("serverKey").remove("serverHandle").remove("googleEmail").remove("myRole").remove("canTranscribe").remove("dirtyEps").remove("dirtyShows").apply()
             serverBusy = Load.Idle
         }
     }
 
-    /** Text a friend can paste into the app to join this server. */
-    fun shareCode(): String? = if (connected && serverKey.isNotBlank()) ShareCode.encode(serverUrl, serverKey) else null
+    /** A link that lets a friend join this server and add you. It holds only the address, no key. */
+    fun friendsCode(): String? = if (connected) ShareCode.encode(serverUrl) else null
+
+    /** An invite that also holds the key, so the friend can use Whisper transcription. Only when this device knows the key. */
+    fun transcribeCode(): String? = if (connected && canTranscribe && serverKey.isNotBlank()) ShareCode.encode(serverUrl, serverKey) else null
+
+    /** Kept for older call sites: the friends link. */
+    fun shareCode(): String? = friendsCode()
+
+    /** Enter the server's invite key to unlock Whisper transcription for this account. */
+    fun unlockTranscription(key: String) {
+        if (!connected) return
+        val k = key.trim()
+        if (k.isBlank()) { serverBusy = Load.Failed("Enter the invite key"); return }
+        val base = serverUrl
+        val tok = serverToken
+        serverBusy = Load.Busy
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { Server.unlockTranscription(base, tok, k) }
+                canTranscribe = true; serverKey = k
+                prefs.edit().putBoolean("canTranscribe", true).putString("serverKey", k).apply()
+                serverBusy = Load.Done
+                loadUsage()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                serverBusy = Load.Failed(e.message ?: "Couldn't unlock transcription")
+            }
+        }
+    }
 
     fun clearServerMessage() { if (serverBusy is Load.Failed) serverBusy = Load.Idle }
 
@@ -1408,14 +1472,44 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         save()
     }
 
-    /** Average of your own episode ratings for a show, and how many episodes that covers. */
+    // ---------- side episodes (trailers, teasers, bonus) ----------
+    /** Your own labels: episode id -> true = side episode, false = main episode. Stored on this phone. */
+    val sideMarks = mutableStateMapOf<String, Boolean>().also { m ->
+        prefs.getString("sideMarks", "")?.split("|")?.forEach { t ->
+            val i = t.indexOf(':'); if (i > 0) m[t.substring(0, i)] = t.substring(i + 1) == "1"
+        }
+    }
+    /** Shows where you chose to let side episodes count in the show rating. */
+    val countSides = mutableStateListOf<String>().also { l ->
+        prefs.getString("countSides", "")?.split("|")?.filter { it.isNotBlank() }?.let { l.addAll(it) }
+    }
+
+    private fun saveSides() {
+        prefs.edit()
+            .putString("sideMarks", sideMarks.entries.joinToString("|") { it.key + ":" + (if (it.value) "1" else "0") })
+            .putString("countSides", countSides.joinToString("|")).apply()
+    }
+
+    /** Is this a side episode: your label first, then what the feed says, then the title. */
+    fun isSide(ep: Episode): Boolean = sideMarks[ep.id] ?: (ep.kind == Kind.SIDE || SideHint.looksSide(ep.title))
+    /** The title looks like a trailer or teaser, but nobody has labelled it yet. */
+    fun sideSuggested(ep: Episode): Boolean = sideMarks[ep.id] == null && ep.kind != Kind.SIDE && SideHint.looksSide(ep.title)
+    fun setSideMark(epId: String, side: Boolean?) { if (side == null) sideMarks.remove(epId) else sideMarks[epId] = side; saveSides() }
+    fun toggleCountSides(pid: String) { if (!countSides.remove(pid)) countSides.add(pid); saveSides() }
+    /** Does this episode's rating count towards the show rating and graph. */
+    fun counts(ep: Episode): Boolean = !isSide(ep) || ep.pid in countSides
+
+    /** Average of your own episode ratings for a show, and how many episodes that covers. Side episodes are left out unless you said to count them. */
     fun showAverage(pid: String): Pair<Double, Int>? {
         var sum = 0
         var n = 0
         val prefix = pid + "_"
         for ((id, l) in log) {
             val r = l.r ?: continue
-            if (id.startsWith(prefix)) { sum += r; n++ }
+            if (!id.startsWith(prefix)) continue
+            val ep = Catalog.episode(id)
+            if (ep != null && !counts(ep)) continue
+            sum += r; n++
         }
         return if (n == 0) null else (sum.toDouble() / n) to n
     }

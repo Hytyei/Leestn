@@ -4,5 +4,6 @@
     <string name="widget_mini_desc">Compact play and pause button with cover art</string>
     <string name="widget_continue_desc">Episodes you started, ready to resume</string>
     <string name="widget_new_desc">New episodes from your subscriptions</string>
+    <string name="widget_last_desc">The show you listened to last, with your stats for it</string>
     <string name="widget_stats_desc">Your listening stats for the year</string>
 </resources>

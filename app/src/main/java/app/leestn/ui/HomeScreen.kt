@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.fillMaxSize
@@ -107,45 +109,16 @@ fun UpNextCard(vm: AppViewModel, ep: Episode, sideCount: Int, onClick: () -> Uni
     }
 }
 
-/** Trakt-style banner for the episode you were last in: full-bleed cover, dark fade, big play button. */
-@Composable
-private fun HeroCard(vm: AppViewModel, ep: Episode, openEp: (String) -> Unit) {
-    val p = showOf(ep.pid)
-    val tint = rememberArtTint(p.artworkUrl)
-    val secs = vm.prog[ep.id] ?: 0
-    val now = vm.playing && vm.playingId == ep.id
-    val shape = RoundedCornerShape(26.dp)
-    Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glow(tint, 18.dp, 0.22f).clip(shape).border(1.dp, tint.copy(alpha = 0.35f), shape).pressable { openEp(ep.id) }) {
-        Poster(p, Modifier.fillMaxWidth(), ratio = 1.5f, corner = 0.dp)
-        Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.25f), lerp(tint, Color.Black, 0.78f).copy(alpha = 0.97f)))))
-        Text(
-            "CONTINUE LISTENING",
-            modifier = Modifier.align(Alignment.TopStart).padding(14.dp).clip(RoundedCornerShape(99.dp)).background(LColors.Red).padding(horizontal = 10.dp, vertical = 4.dp),
-            color = Color.White, style = MaterialTheme.typography.labelSmall,
-        )
-        if (now) Equalizer(true, Modifier.align(Alignment.TopEnd).padding(16.dp), color = Color.White, height = 16.dp)
-        Column(Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 16.dp, end = 84.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("${p.name} · ${ep.code}".uppercase(), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(ep.title, style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (ep.seconds > 0) {
-                GlowBar(secs / ep.seconds.toFloat(), color = tint, height = 4.dp)
-                Text("${Dates.clock(secs)} of ${Dates.clock(ep.seconds)}", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f))
-            }
-        }
-        PlayButton(now, Modifier.align(Alignment.BottomEnd).padding(16.dp).pulseWhen(now, tint), size = 54.dp, filled = true) { if (now) vm.togglePlay() else vm.play(ep.id) }
-    }
-}
-
 /** Spotify-style quick pick: a cover and a name in one rounded tile. */
 @Composable
 private fun QuickTile(vm: AppViewModel, p: Podcast, modifier: Modifier, onClick: () -> Unit) {
     val tint = rememberArtTint(p.artworkUrl)
     val live = vm.playing && Catalog.episode(vm.playingId ?: "")?.pid == p.id
     Row(
-        modifier.clip(RoundedCornerShape(12.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.28f), LColors.Surface2))).pressable(onClick = onClick),
+        modifier.clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.30f), LColors.Surface))).pressable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Poster(p, Modifier.width(54.dp), corner = 0.dp)
+        Poster(p, Modifier.width(56.dp), corner = 0.dp)
         Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         if (live) Equalizer(true, Modifier.padding(end = 10.dp), color = tint, height = 14.dp)
     }
@@ -159,55 +132,19 @@ private fun TopShowRow(rank: Int, p: Podcast, count: Int, max: Int, onClick: () 
         Modifier.padding(horizontal = 16.dp).fillMaxWidth().pressable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("${rank + 1}", style = MaterialTheme.typography.displaySmall, color = if (rank == 0) LColors.Red else LColors.Text3.copy(alpha = 0.7f), modifier = Modifier.width(34.dp))
-        Poster(p, Modifier.width(48.dp), corner = 8.dp)
+        Text("${rank + 1}", style = MaterialTheme.typography.displaySmall, color = if (rank == 0) LColors.Accent else LColors.Text3.copy(alpha = 0.7f), modifier = Modifier.width(34.dp))
+        Poster(p, Modifier.width(52.dp), corner = 14.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Text("$count ep${if (count == 1) "" else "s"}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
             }
-            GlowBar(count / max.coerceAtLeast(1).toFloat(), color = tint, height = 4.dp)
+            GlowBar(count / max.coerceAtLeast(1).toFloat(), color = tint, height = 5.dp)
         }
     }
 }
 
-@Composable
-private fun ContinueCard(vm: AppViewModel, ep: Episode, openEp: (String) -> Unit) {
-    val p = showOf(ep.pid)
-    val tint = rememberArtTint(p.artworkUrl)
-    val secs = vm.prog[ep.id] ?: 0
-    val now = vm.playing && vm.playingId == ep.id
-    val shape = RoundedCornerShape(20.dp)
-    Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape)
-            .background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.34f), LColors.Surface)))
-            .border(1.dp, tint.copy(alpha = 0.28f), shape)
-            .pressable { openEp(ep.id) }.padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Poster(p, Modifier.width(64.dp).glow(tint, 14.dp, if (now) 0.5f else 0.2f), corner = 10.dp)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("${p.name} · ${ep.code}".uppercase(), style = MaterialTheme.typography.labelSmall, color = LColors.Text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(ep.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (ep.seconds > 0) {
-                GlowBar(secs / ep.seconds.toFloat(), color = tint)
-                Text("${Dates.clock(secs)} of ${Dates.clock(ep.seconds)}", style = MaterialTheme.typography.labelSmall, color = LColors.Text2)
-            } else {
-                Text("${Dates.clock(secs)} in", style = MaterialTheme.typography.labelSmall, color = LColors.Text2)
-            }
-        }
-        Row(
-            Modifier.clip(RoundedCornerShape(99.dp)).background(lerp(tint, Color.Black, 0.25f)).pressable { if (now) vm.togglePlay() else vm.play(ep.id) }.padding(horizontal = 14.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            if (now) Equalizer(true, color = Color.White, height = 14.dp) else Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
-            Text(if (now) "Pause" else "Resume", color = Color.White, style = MaterialTheme.typography.labelLarge)
-        }
-        IconButton(onClick = { vm.removeFromContinue(ep.id) }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Rounded.Close, "Remove from Continue listening", tint = LColors.Text2, modifier = Modifier.size(18.dp))
-        }
-    }
-}
+private fun daysAgo(d: String, today: LocalDate): Long? = try { ChronoUnit.DAYS.between(LocalDate.parse(d), today) } catch (e: Exception) { null }
 
 @Composable
 fun HomeScreen(
@@ -219,6 +156,7 @@ fun HomeScreen(
     goFriends: () -> Unit,
     goDiscover: () -> Unit,
     openSettings: () -> Unit = {},
+    goProfile: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) { vm.loadTrending(); vm.loadForYou() }
     LaunchedEffect(vm.connected) { if (vm.connected) vm.loadFeed() }
@@ -245,17 +183,29 @@ fun HomeScreen(
     val feed = vm.feedItems.take(3)
     val nothing = vm.subs.isEmpty() && vm.log.isEmpty() && continuing.isEmpty()
 
+    // this week against the week before, for the colour blocks and the streak
+    val today = remember { LocalDate.now() }
+    val listened = vm.log.entries.mapNotNull { e ->
+        val d = e.value.d ?: return@mapNotNull null
+        val ep = Catalog.episode(e.key) ?: return@mapNotNull null
+        Triple(d, ep, daysAgo(d, today))
+    }
+    val thisWeek = listened.filter { (it.third ?: 99) in 0..6 }
+    val lastWeek = listened.filter { (it.third ?: 99) in 7..13 }
+    val dayset = listened.map { it.first }.toSet()
+    val streak = Streaks.current(dayset, today)
+
     val listState = rememberLazyListState()
     val ambient = rememberArtTint(continuing.firstOrNull()?.let { showOf(it.pid).artworkUrl } ?: "")
     val hour = remember { java.time.LocalTime.now().hour }
     Box(Modifier.fillMaxSize()) {
     // a glow in the colour of what you were last listening to, fading as you scroll
     Box(
-        Modifier.fillMaxWidth().height(340.dp)
+        Modifier.fillMaxWidth().height(360.dp)
             .graphicsLayer { alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 600f).coerceIn(0f, 1f) }
-            .background(Brush.verticalGradient(listOf(ambient.copy(alpha = 0.32f), Color.Transparent))),
+            .background(Brush.verticalGradient(listOf(ambient.copy(alpha = 0.34f), Color.Transparent))),
     )
-    LazyColumn(state = listState, contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+    LazyColumn(state = listState, contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
         item(key = "title") {
             Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp).appear(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 LeestnLogo()
@@ -269,13 +219,29 @@ fun HomeScreen(
         if (nothing) {
             item(key = "welcome") {
                 Column(
-                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(LColors.Surface).padding(20.dp).appear(1),
+                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp).padding(20.dp).appear(1),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("Find something to listen to", style = MaterialTheme.typography.titleLarge)
                     Text("Search real podcasts, paste a Spotify or RSS link, or import your subscriptions. Everything you play, rate and list shows up here.", color = LColors.Text2, style = MaterialTheme.typography.bodyMedium)
                     Gap(4.dp)
                     ActionPill("Open Discover", Icons.Rounded.PlayArrow, primary = true, onClick = goDiscover)
+                }
+            }
+        }
+        if (thisWeek.isNotEmpty() || lastWeek.isNotEmpty()) {
+            item(key = "week") {
+                Column(Modifier.appear(1), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SectionHeader("Your week", subtitle = "Last 7 days against the 7 before")
+                    Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ColorBlock("Episodes", "${thisWeek.size}", LColors.Lilac, Modifier.weight(1f), changeText(thisWeek.size, lastWeek.size))
+                        val hNow = thisWeek.sumOf { it.second.min }
+                        val hBefore = lastWeek.sumOf { it.second.min }
+                        ColorBlock("Hours", String.format(java.util.Locale.US, "%.1f", hNow / 60.0), LColors.Mint, Modifier.weight(1f), changeText(hNow, hBefore))
+                        val sNow = thisWeek.map { it.second.pid }.distinct().size
+                        val sBefore = lastWeek.map { it.second.pid }.distinct().size
+                        ColorBlock("Shows", "$sNow", LColors.Sky, Modifier.weight(1f), changeText(sNow, sBefore))
+                    }
                 }
             }
         }
@@ -286,19 +252,9 @@ fun HomeScreen(
                 exit = fadeOut(tween(Motion.Quick)) + shrinkVertically(tween(Motion.Quick)),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    continuing.firstOrNull()?.let { HeroCard(vm, it, openEp) }
-                    continuing.drop(1).forEach { ep -> ContinueCard(vm, ep, openEp) }
-                }
-            }
-        }
-        if (quick.size >= 2) {
-            item(key = "quick") {
-                Column(Modifier.appear(1).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    quick.chunked(2).forEachIndexed { row, pair ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            pair.forEach { sp -> QuickTile(vm, sp, Modifier.weight(1f).height(54.dp)) { openShow(sp.id) } }
-                            if (pair.size == 1) Box(Modifier.weight(1f))
-                        }
+                    SectionHeader("Continue listening")
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        items(continuing, key = { it.id }) { ep -> ResumeCard(vm, ep, Modifier.width(300.dp)) { openEp(ep.id) } }
                     }
                 }
             }
@@ -306,9 +262,25 @@ fun HomeScreen(
         if (fresh.isNotEmpty()) {
             item(key = "fresh") {
                 Column(Modifier.appear(2), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SectionHeader("New from your shows")
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SectionHeader("New episodes", subtitle = "From your shows")
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(fresh, key = { it.id }) { ep -> EpisodeCard(vm, ep) { openEp(ep.id) } }
+                    }
+                }
+            }
+        }
+        item(key = "streak") { StreakCard(streak, Streaks.week(dayset, today), Modifier.padding(horizontal = 16.dp).appear(2), onClick = goProfile) }
+        if (quick.size >= 2) {
+            item(key = "quick") {
+                Column(Modifier.appear(1), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SectionHeader("Your shows")
+                    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        quick.chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                pair.forEach { sp -> QuickTile(vm, sp, Modifier.weight(1f).height(56.dp)) { openShow(sp.id) } }
+                                if (pair.size == 1) Box(Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
             }
@@ -316,9 +288,19 @@ fun HomeScreen(
         if (ups.isNotEmpty()) {
             item(key = "ups") {
                 Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SectionHeader("Up next in your stories")
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SectionHeader("Up next", subtitle = "In your stories")
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(ups, key = { it.first.id }) { (ep, sides) -> UpNextCard(vm, ep, sides) { openEp(ep.id) } }
+                    }
+                }
+            }
+        }
+        if (tops.isNotEmpty()) {
+            item(key = "tops") {
+                Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    SectionHeader("Your top shows", subtitle = "By episodes finished")
+                    tops.forEachIndexed { i, e ->
+                        Catalog.show(e.key)?.let { sp -> TopShowRow(i, sp, e.value, tops.first().value) { openShow(sp.id) } }
                     }
                 }
             }
@@ -327,18 +309,8 @@ fun HomeScreen(
             item(key = "picks") {
                 Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Picked for you", action = "Discover", onAction = goDiscover)
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(picks, key = { it.id }) { p -> PosterCard(p, onClick = { openShow(p.id) }, rating = vm.showAverage(p.id)?.first) }
-                    }
-                }
-            }
-        }
-        if (tops.isNotEmpty()) {
-            item(key = "tops") {
-                Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SectionHeader("Your top shows")
-                    tops.forEachIndexed { i, e ->
-                        Catalog.show(e.key)?.let { sp -> TopShowRow(i, sp, e.value, tops.first().value) { openShow(sp.id) } }
                     }
                 }
             }
@@ -349,11 +321,11 @@ fun HomeScreen(
                 when (val l = vm.trendingLoad) {
                     is Load.Failed -> ErrorState("Couldn't load the charts. ${l.message}", onRetry = { vm.loadTrending(force = true) })
                     else -> if (vm.trending.isEmpty()) {
-                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), userScrollEnabled = false) {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), userScrollEnabled = false) {
                             items(5) { PosterCardSkeleton() }
                         }
                     } else {
-                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             items(vm.trending, key = { it.id }) { p -> PosterCard(p, onClick = { openShow(p.id) }, rating = vm.showAverage(p.id)?.first) }
                         }
                     }

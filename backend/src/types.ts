@@ -10,6 +10,10 @@ export interface Env {
   WHISPER_DAILY_MINUTES?: string;
   /** Public id of the Google sign-in client (`wrangler secret put GOOGLE_CLIENT_ID`). Without it Google sign-in is off. */
   GOOGLE_CLIENT_ID?: string;
+  /** Set to "invite" to close sign-ups to people without the invite key. Anything else (or unset) keeps sign-ups open for friends. */
+  SIGNUPS?: string;
+  /** Abuse brake for sign-ups without the invite key, per rolling 24 hours. Default 50. */
+  MAX_SIGNUPS_PER_DAY?: string;
   MAX_AUDIO_MB: string;
   ALLOW_ORIGIN: string;
 }

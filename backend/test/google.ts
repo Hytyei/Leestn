@@ -53,8 +53,13 @@ ok("config: shows the public client id", r.j.google === true && r.j.googleClient
 
 r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}) });
 ok("new Google account without a username: 404 needsHandle", r.s === 404 && r.j.needsHandle === true, r);
+// (changed in 1.6.0: sign-up is open to friends unless the server is set to SIGNUPS=invite)
+env.SIGNUPS = "invite";
 r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}), handle: "ann" });
-ok("sign up without the invite key is refused", r.s === 401, r);
+ok("sign up without the invite key is refused when the server is invite-only", r.s === 401, r);
+r = await call(env, "GET", "/v1/auth/config");
+ok("config says sign-up is closed", r.j.openSignup === false, r);
+delete env.SIGNUPS;
 r = await call(env, "POST", "/v1/auth/google", "secret", { idToken: await idToken({}), handle: "x" });
 ok("bad handle is refused", r.s === 400, r);
 r = await call(env, "POST", "/v1/auth/google", "secret", { idToken: await idToken({}), handle: "ann" });
@@ -71,6 +76,22 @@ ok("only hashes are stored", (db.prepare("SELECT COUNT(*) n FROM user_tokens WHE
 r = await call(env, "POST", "/v1/auth/google", "secret", { idToken: await idToken({}), handle: "someoneelse" });
 ok("a linked Google account signs in even if a handle is sent", r.s === 200 && r.j.user.handle === "ann", r);
 ok("the google keys are cached", certFetches === 1, certFetches);
+
+// transcription access follows how the account was created (new in 1.6.0)
+r = await call(env, "GET", "/v1/me", tok1);
+ok("a Google sign-up with the invite key may transcribe", r.j.canTranscribe === true, r);
+r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({ sub: "g-free", email: "f@example.com" }), handle: "freddy" });
+const free = r.j.token;
+ok("a Google sign-up without a key is created as a friend", r.s === 201 && /^lst_/.test(free), r);
+r = await call(env, "GET", "/v1/usage", free);
+ok("...who cannot use transcription yet", r.s === 403, r);
+r = await call(env, "POST", "/v1/me/unlock", free, { key: "secret" });
+ok("...until they enter the invite key", r.s === 200, r);
+r = await call(env, "GET", "/v1/usage", free);
+ok("...and then can", r.s === 200, r);
+r = await call(env, "POST", "/v1/auth/google", "wrongkey", { idToken: await idToken({ sub: "g-zzz" }), handle: "zzz" });
+ok("a wrong key on Google sign-up is refused", r.s === 401, r);
+db.exec("DELETE FROM users WHERE handle='freddy'");
 
 // bad tokens
 r = await call(env, "POST", "/v1/auth/google", "", { idToken: await idToken({}, { tamper: true }) });

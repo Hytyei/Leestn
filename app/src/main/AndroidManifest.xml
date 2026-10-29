@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
+        android:name=".LeestnApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -90,6 +91,17 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_new_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.LastActivityReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_last_info" />
         </receiver>
 
         <receiver

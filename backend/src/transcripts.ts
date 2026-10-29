@@ -1,6 +1,6 @@
 import type { ChunkJob, Env, Segment } from "./types";
 import { HttpError, bytesToBase64, int, json, str, body } from "./util";
-import { member } from "./users";
+import { transcriber } from "./users";
 import { Unsupported, buildAdts, findMoov, isAdts, plan as planAac, type AacInfo, type Slice } from "./mp4";
 
 const MODEL = "@cf/openai/whisper-large-v3-turbo";
@@ -46,7 +46,7 @@ async function timingOf(env: Env, epId: string): Promise<Timing | null> {
 
 /** PUT /v1/transcripts/:epId/timing — save (or clear) the shared timing fix. Any member may do it. */
 export async function putTiming(env: Env, req: Request, epId: string): Promise<Response> {
-  const { user } = await member(env, req);
+  const { user } = await transcriber(env, req);
   const row = await env.DB.prepare("SELECT status FROM transcripts WHERE ep_id = ?").bind(epId).first<{ status: string }>();
   if (!row || row.status !== "ready") throw new HttpError(404, "There is no finished transcript on the server for this episode");
   const b = await body(req);
@@ -302,7 +302,7 @@ async function probe(url: string): Promise<{ size: number; type: string; head: U
 }
 
 export async function getTranscript(env: Env, req: Request, epId: string): Promise<Response> {
-  await member(env, req);
+  await transcriber(env, req);
   const row = await env.DB.prepare("SELECT * FROM transcripts WHERE ep_id = ?").bind(epId).first<Row>();
   return json(env, view(row, row?.status === "ready" ? await timingOf(env, epId) : null));
 }
@@ -316,7 +316,7 @@ export async function usageNow(env: Env) {
 
 /** GET /v1/usage: how much of today's free Whisper time is used. Read-only, uses no AI. */
 export async function getUsage(env: Env, req: Request): Promise<Response> {
-  await member(env, req);
+  await transcriber(env, req);
   const u = await usageNow(env);
   return json(env, {
     limitMin: Math.round(u.limitSec / 60),
@@ -329,7 +329,7 @@ export async function getUsage(env: Env, req: Request): Promise<Response> {
 }
 
 export async function requestTranscript(env: Env, req: Request): Promise<Response> {
-  const { user } = await member(env, req);
+  const { user } = await transcriber(env, req);
   const requester = user?.id ?? "key";
   const b = await body(req);
   const epId = str(b.epId, 120);

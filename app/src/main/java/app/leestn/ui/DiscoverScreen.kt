@@ -8,6 +8,17 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -92,32 +103,46 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Text("Discover", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+                Row(Modifier.appear(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Discover", style = MaterialTheme.typography.displaySmall)
+                        Text("Find your next show", style = MaterialTheme.typography.bodyMedium, color = LColors.Text3)
+                    }
                     ActionPill("Add show", Icons.Rounded.Add) { dialog = true }
                 }
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it; genre = "All" },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
                     singleLine = true,
                     placeholder = { Text("Search every podcast") },
                     leadingIcon = { Icon(Icons.Rounded.Search, null) },
                     shape = RoundedCornerShape(99.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = LColors.Red,
-                        unfocusedBorderColor = LColors.Surface3,
+                        focusedBorderColor = LColors.Accent,
+                        unfocusedBorderColor = Color.Transparent,
                         focusedContainerColor = LColors.Surface,
                         unfocusedContainerColor = LColors.Surface,
-                        cursorColor = LColors.Red,
+                        cursorColor = LColors.Accent,
                     ),
                 )
                 AnimatedVisibility(genres.size > 1, enter = fadeIn(tween(Motion.Normal)), exit = fadeOut(tween(Motion.Quick))) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 2.dp)) {
-                        items(listOf("All") + genres, key = { it }) { g -> Chip(g, genre == g) { genre = g } }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 2.dp)) {
+                        val tints = listOf(LColors.Lilac, LColors.Mint, LColors.Sky)
+                        items(listOf("All") + genres, key = { it }) { g ->
+                            val on = genre == g
+                            val tint = if (g == "All") LColors.Accent else tints[(genres.indexOf(g).coerceAtLeast(0)) % tints.size]
+                            Box(
+                                Modifier.clip(RoundedCornerShape(18.dp)).background(tint.copy(alpha = if (on) 1f else 0.78f))
+                                    .border(BorderStroke(2.dp, if (on) Color.White else Color.Transparent), RoundedCornerShape(18.dp))
+                                    .pressable { genre = g }.padding(horizontal = 18.dp, vertical = 14.dp),
+                            ) {
+                                Text(g, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, color = if (g == "All") Color.White else Color(0xFF14121B), maxLines = 1)
+                            }
+                        }
                     }
                 }
-                if (searching) Text("Results for “${query.trim()}”", style = MaterialTheme.typography.titleLarge, modifier = Modifier.animateContentSize())
+                if (searching) Text("Results for “${query.trim()}”", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.animateContentSize())
                 else if (vm.forYou.isEmpty()) Text("Trending now", style = MaterialTheme.typography.titleLarge)
             }
         }
@@ -133,7 +158,7 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
             vm.forYou.entries.toList().forEach { (g, list) ->
                 item(key = "fy-$g", span = { GridItemSpan(maxLineSpan) }) {
                     Column(Modifier.animateItem().appear(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Because you like $g", style = MaterialTheme.typography.titleLarge)
+                        Text("Because you like $g", style = MaterialTheme.typography.headlineSmall)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(list.take(14), key = { it.id }) { p -> PosterCard(p, onClick = { openShow(p.id) }, rating = vm.showAverage(p.id)?.first) }
                         }
@@ -142,7 +167,24 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
             }
             if (vm.forYou.isNotEmpty()) {
                 item(key = "trend-title", span = { GridItemSpan(maxLineSpan) }) {
-                    Text("Trending now", style = MaterialTheme.typography.titleLarge)
+                    Text("Trending now", style = MaterialTheme.typography.headlineSmall)
+                }
+            }
+        }
+        if (!searching && genre == "All" && shown.size >= 5) {
+            itemsIndexed(shown.take(5), key = { _, p -> "top-" + p.id }, span = { _, _ -> GridItemSpan(maxLineSpan) }) { i, p ->
+                Row(
+                    Modifier.fillMaxWidth().card(24.dp).pressable { openShow(p.id) }.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text("${i + 1}", style = MaterialTheme.typography.displaySmall, color = if (i == 0) LColors.Accent else LColors.Text3, modifier = Modifier.width(34.dp))
+                    Poster(p, Modifier.size(56.dp), corner = 14.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(p.genre.ifBlank { p.host }, style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    vm.showAverage(p.id)?.let { RatingChip(it.first) }
+                    Icon(Icons.Rounded.ChevronRight, null, tint = LColors.Text3)
                 }
             }
         }
@@ -160,7 +202,7 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
                     if (searching) ActionPill("Add by RSS or link", Icons.Rounded.Add) { dialog = true }
                 }
             }
-            else -> itemsIndexed(shown, key = { _, p -> p.id }) { i, p ->
+            else -> itemsIndexed(if (!searching && genre == "All" && shown.size >= 5) shown.drop(5) else shown, key = { _, p -> p.id }) { i, p ->
                 PosterCard(
                     p, onClick = { openShow(p.id) }, rating = vm.showAverage(p.id)?.first,
                     modifier = Modifier.fillMaxWidth().animateItem().let { if (i < 12) it.appear(i, 30) else it },
@@ -185,11 +227,11 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
                         value = link, onValueChange = { link = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("https://…") }, leadingIcon = { Icon(Icons.Rounded.Link, null) },
                         shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Accent, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Accent),
                     )
                     when (val l = vm.addLoad) {
                         is Load.Busy -> Text("Looking it up…", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
-                        is Load.Failed -> Text(l.message, style = MaterialTheme.typography.bodySmall, color = LColors.Red)
+                        is Load.Failed -> Text(l.message, style = MaterialTheme.typography.bodySmall, color = LColors.Err)
                         else -> vm.addMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = LColors.Good) }
                     }
                     ActionPill("Import OPML file", Icons.Rounded.FileUpload) { picker.launch(arrayOf("*/*")) }

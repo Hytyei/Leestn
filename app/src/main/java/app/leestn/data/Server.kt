@@ -15,7 +15,7 @@ data class Usage(val limitMin: Int, val usedMin: Double, val remainingMin: Doubl
 data class RPerson(val handle: String, val name: String, val bio: String, val avatarV: Long, val following: Boolean, val role: String = "")
 
 /** Own account details, including the linked Google email (empty when none). */
-data class RMe(val handle: String, val name: String, val role: String, val googleEmail: String)
+data class RMe(val handle: String, val name: String, val role: String, val googleEmail: String, val canTranscribe: Boolean = true)
 
 /** Result of signing in or up with Google. */
 data class GoogleResult(val token: String, val handle: String, val name: String, val created: Boolean)
@@ -28,6 +28,8 @@ data class RFeedItem(
     val id: Long, val at: Long, val handle: String, val name: String, val avatarV: Long,
     val epId: String, val epTitle: String, val showId: String, val showName: String, val showArt: String, val feedUrl: String,
     val rating: Int?, val listenedAt: String, val role: String = "",
+    /** Minutes listened so far (0 if the server did not say) and whether this is your own activity. */
+    val minutes: Int = 0, val mine: Boolean = false,
 ) {
     val key: String get() = "$handle:$epId"
 }
@@ -51,24 +53,29 @@ data class GroupRatings(
     val episodes: Map<String, Pair<Double, Int>>,
 )
 
-/** The text a friend pastes to join your server: its address and the invite key. */
+/**
+ * The text a friend pastes to join your server. A friends link holds only the address (anyone can join).
+ * A transcription invite also holds the invite key, which unlocks Whisper transcription.
+ */
 object ShareCode {
     private const val PREFIX = "LSTN-"
 
-    fun encode(url: String, key: String): String {
-        val j = JSONObject().put("v", 1).put("u", url).put("k", key).toString()
+    fun encode(url: String, key: String = ""): String {
+        val o = JSONObject().put("v", 1).put("u", url)
+        if (key.isNotBlank()) o.put("k", key)
+        val j = o.toString()
         return PREFIX + Base64.encodeToString(j.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 
-    /** Accepts the bare code or a whole message containing it. Returns the server address and key, or null. */
+    /** Accepts the bare code or a whole message containing it. Returns the server address and key (the key is empty for a friends link), or null. */
     fun decode(raw: String): Pair<String, String>? {
         val m = Regex("LSTN-([A-Za-z0-9_\\-]+)").find(raw.trim()) ?: return null
         return try {
             val bytes = Base64.decode(m.groupValues[1], Base64.URL_SAFE or Base64.NO_WRAP)
             val j = JSONObject(String(bytes, Charsets.UTF_8))
             val u = j.getString("u").trim().trimEnd('/')
-            val k = j.getString("k")
-            if (u.startsWith("https://") && k.isNotBlank()) u to k else null
+            val k = j.optString("k")
+            if (u.startsWith("https://")) u to k else null
         } catch (e: Exception) {
             null
         }
@@ -104,7 +111,7 @@ object Server {
     private fun optInt(o: JSONObject, k: String): Int? = if (o.isNull(k) || !o.has(k)) null else o.optInt(k)
     private fun optDbl(o: JSONObject, k: String): Double? = if (o.isNull(k) || !o.has(k)) null else o.optDouble(k).takeIf { !it.isNaN() }
 
-    /** Create an account. [inviteKey] is the server's invite key. Returns the new account's secret token. */
+    /** Create an account. [inviteKey] may be blank (open sign-up, no transcription until unlocked). Returns the new account's secret token. */
     fun join(base: String, inviteKey: String, handle: String, name: String, bio: String): String {
         val j = call("POST", base, inviteKey, "/v1/users", JSONObject().put("handle", handle).put("name", name).put("bio", bio))
         return j.getString("token")
@@ -136,7 +143,12 @@ object Server {
 
     fun account(base: String, token: String): RMe {
         val j = call("GET", base, token, "/v1/me")
-        return RMe(j.getString("handle"), j.optString("name"), j.optString("role"), j.optString("googleEmail"))
+        return RMe(j.getString("handle"), j.optString("name"), j.optString("role"), j.optString("googleEmail"), j.optBoolean("canTranscribe", true))
+    }
+
+    /** Unlock Whisper transcription for this account with the server's invite key. Throws with the server's message if the key is wrong. */
+    fun unlockTranscription(base: String, token: String, key: String) {
+        call("POST", base, token, "/v1/me/unlock", JSONObject().put("key", key))
     }
 
     fun patchMe(base: String, token: String, name: String, bio: String) {
@@ -197,6 +209,7 @@ object Server {
                 o.optLong("id"), o.optLong("at"), u.optString("handle"), u.optString("name"), u.optLong("avatarV"),
                 o.optString("epId"), o.optString("epTitle"), o.optString("showId"), o.optString("showName"), o.optString("showArt"),
                 o.optString("feedUrl"), optInt(o, "rating"), o.optString("listenedAt"), u.optString("role"),
+                o.optInt("minutes"), o.optBoolean("mine"),
             )
         }
     }

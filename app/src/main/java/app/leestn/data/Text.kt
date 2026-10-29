@@ -7,6 +7,19 @@ import java.util.Locale
 
 /** Pure helpers for feed text, durations and dates. No Android dependencies, so they can be unit tested on the JVM. */
 object Text {
+    /**
+     * An image or link address from a feed, made absolute against the feed's own address (feeds sometimes give
+     * "/img/cover.jpg" or "//cdn.host/cover.jpg"), with stray spaces and line breaks removed. Blank stays blank.
+     */
+    fun absUrl(base: String, raw: String): String {
+        val u = raw.trim().replace("\n", "").replace("\r", "").replace(" ", "%20")
+        if (u.isEmpty()) return ""
+        if (u.startsWith("http://") || u.startsWith("https://")) return u
+        if (u.startsWith("//")) return (if (base.startsWith("http://")) "http:" else "https:") + u
+        if (base.isBlank()) return ""
+        return try { java.net.URI(base).resolve(u).toString() } catch (e: Exception) { "" }
+    }
+
     fun sha1(s: String): String {
         val d = MessageDigest.getInstance("SHA-1").digest(s.toByteArray(Charsets.UTF_8))
         val sb = StringBuilder()

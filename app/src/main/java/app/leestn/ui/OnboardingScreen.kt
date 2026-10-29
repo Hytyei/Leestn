@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -48,6 +49,7 @@ fun GenrePicker(selected: List<String>, onToggle: (String) -> Unit, modifier: Mo
 fun OnboardingScreen(vm: AppViewModel) {
     val picked = remember { mutableStateListOf<String>() }
     Box(Modifier.fillMaxSize().background(LColors.Bg)) {
+        Box(Modifier.fillMaxWidth().height(320.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(LColors.Accent.copy(alpha = 0.30f), androidx.compose.ui.graphics.Color.Transparent))))
         Column(
             Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 40.dp, bottom = 140.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -65,7 +67,7 @@ fun OnboardingScreen(vm: AppViewModel) {
             Text("${picked.size} of 8 picked", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
         }
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(LColors.Bg).navigationBarsPadding().padding(20.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, LColors.Bg, LColors.Bg))).navigationBarsPadding().padding(20.dp).padding(top = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {

@@ -8,6 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -51,21 +56,21 @@ private fun pidOf(item: ListItem): String = when (item) {
     is ListItem.Show -> item.id
 }
 
+/** A small fan of up to three posters, like a hand of cards. */
 @Composable
-private fun Mosaic(list: UserList) {
-    val first = list.items.take(4)
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        for (row in 0..1) {
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                for (col in 0..1) {
-                    val item = first.getOrNull(row * 2 + col)
-                    if (item != null) {
-                        Poster(showOf(pidOf(item)), Modifier.weight(1f), corner = 10.dp)
-                    } else {
-                        Box(Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(10.dp)).background(LColors.Surface2))
-                    }
-                }
-            }
+private fun Fan(list: UserList, modifier: Modifier = Modifier) {
+    val first = list.items.take(3)
+    Box(modifier.width(112.dp).height(84.dp)) {
+        if (first.isEmpty()) {
+            Box(Modifier.align(Alignment.CenterStart).size(72.dp).clip(RoundedCornerShape(16.dp)).background(LColors.Surface2))
+        }
+        first.asReversed().forEachIndexed { rev, item ->
+            val i = first.size - 1 - rev
+            Poster(
+                showOf(pidOf(item)),
+                Modifier.align(Alignment.CenterStart).offset(x = (i * 20).dp).size(72.dp).graphicsLayer { rotationZ = (i - 1) * 4f },
+                corner = 14.dp,
+            )
         }
     }
 }
@@ -73,49 +78,70 @@ private fun Mosaic(list: UserList) {
 @Composable
 fun ListsScreen(vm: AppViewModel, openList: (String) -> Unit, openDownloads: () -> Unit = {}) {
     var name by remember { mutableStateOf("") }
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    var tab by remember { mutableStateOf(0) }
+    val all = vm.lists.toList()
+    val shown = when (tab) {
+        1 -> all.filter { l -> l.items.any { it is ListItem.Show } }
+        2 -> all.filter { l -> l.items.any { it is ListItem.Ep } }
+        else -> all
+    }
+    val offline = app.leestn.data.Downloads.state.values.count { it is app.leestn.data.Dl.Done }
+    LazyColumn(
+        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Lists", style = MaterialTheme.typography.headlineMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = name, onValueChange = { if (it.length <= 40) name = it }, singleLine = true, modifier = Modifier.weight(1f),
-                        placeholder = { Text("Name a new list") }, shape = RoundedCornerShape(99.dp),
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = LColors.Red, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Red),
-                    )
-                    ActionPill("Create", Icons.Rounded.Add, primary = name.isNotBlank()) {
-                        if (name.isNotBlank()) { vm.createList(name); name = "" }
-                    }
+        item { ScreenTitle("Lists", Modifier.appear(), subtitle = "${all.size} list${if (all.size == 1) "" else "s"}") }
+        item {
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ColorBlock("Lists", "${all.size}", LColors.Lilac, Modifier.weight(1f))
+                ColorBlock("Items", "${all.sumOf { it.items.size }}", LColors.Mint, Modifier.weight(1f))
+                ColorBlock("Offline", "$offline", LColors.Sky, Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = name, onValueChange = { if (it.length <= 40) name = it }, singleLine = true, modifier = Modifier.weight(1f),
+                    placeholder = { Text("Name a new list") }, shape = RoundedCornerShape(99.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = LColors.Accent, unfocusedBorderColor = LColors.Surface3, cursorColor = LColors.Accent,
+                        focusedContainerColor = LColors.Surface, unfocusedContainerColor = LColors.Surface,
+                    ),
+                )
+                ActionPill("Create", Icons.Rounded.Add, primary = name.isNotBlank()) {
+                    if (name.isNotBlank()) { vm.createList(name); name = "" }
                 }
             }
         }
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            val n = app.leestn.data.Downloads.state.values.count { it is app.leestn.data.Dl.Done }
+        item {
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).pressable(onClick = openDownloads).padding(14.dp),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).pressable(onClick = openDownloads).padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Icon(Icons.Rounded.Download, null, tint = LColors.Red)
+                Icon(Icons.Rounded.Download, null, tint = LColors.Accent)
                 Column(Modifier.weight(1f)) {
                     Text("Downloads", style = MaterialTheme.typography.titleSmall)
-                    Text("$n episode${if (n == 1) "" else "s"} available offline", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
+                    Text("$offline episode${if (offline == 1) "" else "s"} available offline", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
                 }
+                Icon(Icons.Rounded.ChevronRight, null, tint = LColors.Text3)
             }
         }
-        items(vm.lists.toList(), key = { it.id }) { l ->
-            Column(
-                Modifier.animateItem().clip(RoundedCornerShape(18.dp)).background(LColors.Surface).pressable { openList(l.id) }.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+        item { PillTabs(listOf("All", "Shows", "Episodes"), tab, { tab = it }) }
+        if (shown.isEmpty()) item {
+            Text("No lists here yet.", color = LColors.Text3, modifier = Modifier.padding(horizontal = 16.dp))
+        }
+        items(shown, key = { it.id }) { l ->
+            Row(
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().animateItem().card(24.dp).pressable { openList(l.id) }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Mosaic(l)
-                Text(l.name, style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                Text("${l.items.size} item${if (l.items.size == 1) "" else "s"}${if (l.id == "wishlist") " · default" else ""}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+                Fan(l)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(l.name, style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                    Text("${l.items.size} item${if (l.items.size == 1) "" else "s"}${if (l.id == "wishlist") " · default" else ""}", style = MaterialTheme.typography.labelMedium, color = LColors.Text3)
+                }
+                Icon(Icons.Rounded.ChevronRight, null, tint = LColors.Text3)
             }
         }
     }
@@ -138,7 +164,7 @@ fun ListDetailScreen(vm: AppViewModel, listId: String, onBack: () -> Unit, openE
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("${list.items.size} ITEM${if (list.items.size == 1) "" else "S"}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
-                    Text(list.name, style = MaterialTheme.typography.headlineMedium)
+                    Text(list.name, style = MaterialTheme.typography.displaySmall)
                 }
             }
         }
