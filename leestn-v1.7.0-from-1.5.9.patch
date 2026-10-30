@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 71a827e..9c819b4 100644
+index 71a827e..175da17 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -23,8 +23,8 @@ android {
@@ -8,8 +8,8 @@ index 71a827e..9c819b4 100644
          targetSdk = 35
 -        versionCode = 24
 -        versionName = "1.5.9"
-+        versionCode = 25
-+        versionName = "1.6.0"
++        versionCode = 26
++        versionName = "1.7.0"
      }
  
      signingConfigs {
@@ -45,7 +45,7 @@ index e5381e1..b3f9a64 100644
              android:exported="true">
 diff --git a/app/src/main/java/app/leestn/LeestnApp.kt b/app/src/main/java/app/leestn/LeestnApp.kt
 new file mode 100644
-index 0000000..06983f3
+index 0000000..4e7067b
 --- /dev/null
 +++ b/app/src/main/java/app/leestn/LeestnApp.kt
 @@ -0,0 +1,36 @@
@@ -72,7 +72,7 @@ index 0000000..06983f3
 +            .addInterceptor { chain ->
 +                val req = chain.request().newBuilder()
 +                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36 Leestn/1.0")
-+                    .header("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5")
++                    .header("Accept", "image/webp,image/png,image/jpeg,image/*;q=0.8")
 +                    .build()
 +                chain.proceed(req)
 +            }
@@ -157,6 +157,50 @@ index 6539fc9..c27b3ac 100644
                      )
                      r == "discover" -> DiscoverScreen(vm) { openShow(it) }
                      r == "lists" -> ListsScreen(vm, openList = { push("list:$it") }, openDownloads = { push("downloads") })
+diff --git a/app/src/main/java/app/leestn/data/ArtRepair.kt b/app/src/main/java/app/leestn/data/ArtRepair.kt
+new file mode 100644
+index 0000000..bc5ac88
+--- /dev/null
++++ b/app/src/main/java/app/leestn/data/ArtRepair.kt
+@@ -0,0 +1,38 @@
++package app.leestn.data
++
++import androidx.compose.runtime.mutableStateMapOf
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.setValue
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.launch
++
++/**
++ * When a show's own cover address fails to load, look the show up in Apple's directory and use its cover instead.
++ * The result is remembered for this run. [lastError] holds the most recent load failure so Settings can show it.
++ */
++object ArtRepair {
++    private val fixed = mutableStateMapOf<String, String>()
++    private val tried = HashSet<String>()
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++    var lastError by mutableStateOf<String?>(null)
++
++    /** The address to draw: the repaired one if there is one, else the show's own. */
++    fun url(p: Podcast): String = fixed[p.id] ?: p.artworkUrl
++
++    fun failed(p: Podcast, url: String, error: Throwable?) {
++        lastError = "${p.name.ifBlank { p.id }}: ${error?.javaClass?.simpleName ?: "error"} ${error?.message ?: ""} ($url)".take(300)
++        if (p.name.isBlank() || fixed.containsKey(p.id) || !tried.add(p.id)) return
++        scope.launch {
++            try {
++                val want = p.name.lowercase().filter { it.isLetterOrDigit() }
++                val hit = Itunes.search(p.name, 8).firstOrNull { it.name.lowercase().filter { c -> c.isLetterOrDigit() } == want && it.artworkUrl.isNotBlank() }
++                if (hit != null && hit.artworkUrl != url) fixed[p.id] = hit.artworkUrl
++            } catch (e: Exception) {
++                // no repair possible: the placeholder stays
++            }
++        }
++    }
++}
 diff --git a/app/src/main/java/app/leestn/data/Catalog.kt b/app/src/main/java/app/leestn/data/Catalog.kt
 index 77b6204..f039604 100644
 --- a/app/src/main/java/app/leestn/data/Catalog.kt
@@ -384,7 +428,7 @@ index d35128b..85f43fe 100644
          val d = MessageDigest.getInstance("SHA-1").digest(s.toByteArray(Charsets.UTF_8))
          val sb = StringBuilder()
 diff --git a/app/src/main/java/app/leestn/state/AppViewModel.kt b/app/src/main/java/app/leestn/state/AppViewModel.kt
-index c5b133f..5da002b 100644
+index c5b133f..955a20a 100644
 --- a/app/src/main/java/app/leestn/state/AppViewModel.kt
 +++ b/app/src/main/java/app/leestn/state/AppViewModel.kt
 @@ -46,6 +46,7 @@ import app.leestn.data.BadgeProgress
@@ -403,17 +447,19 @@ index c5b133f..5da002b 100644
  import app.leestn.widget.WNow
  import app.leestn.widget.WSnapshot
  import app.leestn.widget.WStats
-@@ -134,6 +136,9 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -134,8 +136,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
      var googleEmail by mutableStateOf(prefs.getString("googleEmail", "") ?: "")
          private set
      /** "founder" shows a verified badge next to your name. Set on the server only. */
+-    var myRole by mutableStateOf(prefs.getString("myRole", "") ?: "")
 +    /** True when this account may use the server's Whisper transcription (needs the invite key once). Saved so it shows offline. */
 +    var canTranscribe by mutableStateOf(prefs.getBoolean("canTranscribe", true))
-+        private set
-     var myRole by mutableStateOf(prefs.getString("myRole", "") ?: "")
          private set
++    var myRole by mutableStateOf(prefs.getString("myRole", "") ?: "")
          private set
-@@ -301,7 +306,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+     var serverBusy by mutableStateOf<Load>(Load.Idle)
+         private set
+@@ -301,7 +305,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
  
      /** Refresh the free-Whisper meter. Never creates jobs or uses AI. */
      fun loadUsage() {
@@ -422,7 +468,7 @@ index c5b133f..5da002b 100644
          val base = serverUrl
          val tok = serverToken
          viewModelScope.launch {
-@@ -567,7 +572,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -567,7 +571,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
          val cont = prog.entries.mapNotNull { (id, secs) ->
              val ep = Catalog.episode(id) ?: return@mapNotNull null
              val frac = if (ep.durationSec > 0) secs.toFloat() / ep.durationSec else 0f
@@ -431,7 +477,7 @@ index c5b133f..5da002b 100644
          }.take(5)
          val fresh = subs.flatMap { pid -> Catalog.show(pid)?.eps?.take(6) ?: emptyList() }
              .filter { log[it.id]?.d == null && it.audioUrl.isNotBlank() }
-@@ -587,17 +592,42 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -587,17 +591,42 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
              if (st.rated > 0) String.format(java.util.Locale.US, "%.1f", st.avg) else "",
              week = week.toList(),
          )
@@ -476,7 +522,7 @@ index c5b133f..5da002b 100644
      private fun rememberEp(id: String) {
          Catalog.episode(id)?.let { remember(it.pid) }
      }
-@@ -783,6 +813,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -783,6 +812,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
              try {
                  val p = gate.withPermit { withContext(Dispatchers.IO) { Catalog.fetch(stub) } }
                  Catalog.register(p)
@@ -484,7 +530,7 @@ index c5b133f..5da002b 100644
                  fetchedAt[pid] = System.currentTimeMillis()
                  showLoad[pid] = Load.Done
                  pendingPlay?.let { id -> if (Catalog.episode(id) != null) { pendingPlay = null; play(id) } }
-@@ -1040,7 +1071,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -1040,7 +1070,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
          val key = inviteKey.trim()
          if (!base.startsWith("https://")) { serverBusy = Load.Failed("The server address must start with https://"); return }
          if (!Regex("[a-z0-9_]{3,30}").matches(h)) { serverBusy = Load.Failed("Your username needs 3 to 30 letters, numbers or underscores"); return }
@@ -493,7 +539,7 @@ index c5b133f..5da002b 100644
          val shown = name.trim().ifBlank { profileName }.ifBlank { h }
          serverBusy = Load.Busy
          viewModelScope.launch {
-@@ -1157,7 +1188,11 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -1157,7 +1187,11 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                  val me = withContext(Dispatchers.IO) { Server.account(base, tok) }
                  myRole = me.role
                  googleEmail = me.googleEmail
@@ -506,7 +552,7 @@ index c5b133f..5da002b 100644
              } catch (e: kotlinx.coroutines.CancellationException) {
                  throw e
              } catch (e: Throwable) {
-@@ -1180,17 +1215,46 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -1180,17 +1214,46 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
                  serverBusy = Load.Failed("Couldn't reach the server to delete your account here (${e.message}). Try again when you are online.")
                  return@launch
              }
@@ -557,7 +603,7 @@ index c5b133f..5da002b 100644
  
      fun clearServerMessage() { if (serverBusy is Load.Failed) serverBusy = Load.Idle }
  
-@@ -1409,14 +1473,44 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
+@@ -1409,14 +1472,44 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
          save()
      }
  
@@ -650,7 +696,7 @@ index dbefdf7..ce5ff71 100644
          verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
      ) {
 diff --git a/app/src/main/java/app/leestn/ui/Components.kt b/app/src/main/java/app/leestn/ui/Components.kt
-index f3b04f0..32e249e 100644
+index f3b04f0..6da62be 100644
 --- a/app/src/main/java/app/leestn/ui/Components.kt
 +++ b/app/src/main/java/app/leestn/ui/Components.kt
 @@ -12,6 +12,7 @@ import coil.compose.AsyncImage
@@ -670,7 +716,17 @@ index f3b04f0..32e249e 100644
      showName: Boolean = false,
  ) {
      val shape = RoundedCornerShape(corner)
-@@ -193,12 +194,17 @@ fun PersonAvatar(vm: AppViewModel, handle: String, name: String, avatarV: Long,
+@@ -143,7 +144,8 @@ fun Poster(
+         Canvas(Modifier.fillMaxSize()) { drawMotif(p.motif) }
+         if (hasArt) {
+             AsyncImage(
+-                model = ImageRequest.Builder(LocalContext.current).data(p.artworkUrl).crossfade(350).build(),
++                model = ImageRequest.Builder(LocalContext.current).data(app.leestn.data.ArtRepair.url(p)).crossfade(350).allowHardware(false).build(),
++                onError = { app.leestn.data.ArtRepair.failed(p, app.leestn.data.ArtRepair.url(p), it.result.throwable) },
+                 contentDescription = p.name,
+                 contentScale = ContentScale.Crop,
+                 modifier = Modifier.fillMaxSize(),
+@@ -193,12 +195,17 @@ fun PersonAvatar(vm: AppViewModel, handle: String, name: String, avatarV: Long,
  // ---------- small pieces ----------
  
  @Composable
@@ -693,7 +749,7 @@ index f3b04f0..32e249e 100644
          }
      }
  }
-@@ -270,7 +276,7 @@ fun PlayButton(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 36.dp
+@@ -270,7 +277,7 @@ fun PlayButton(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 36.dp
  
  @Composable
  fun StatTile(value: String, label: String, modifier: Modifier = Modifier) {
@@ -2302,10 +2358,16 @@ index a32d1cb..1b9f3f9 100644
                  ) { Text("$n", color = if (on) Color(0xFF101010) else LColors.Text3, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
              }
 diff --git a/app/src/main/java/app/leestn/ui/SettingsScreen.kt b/app/src/main/java/app/leestn/ui/SettingsScreen.kt
-index 742bc31..81553d5 100644
+index 742bc31..20dfb3f 100644
 --- a/app/src/main/java/app/leestn/ui/SettingsScreen.kt
 +++ b/app/src/main/java/app/leestn/ui/SettingsScreen.kt
-@@ -19,6 +19,9 @@ import androidx.compose.material.icons.rounded.Check
+@@ -16,9 +16,15 @@ import androidx.compose.foundation.layout.Box
+ import androidx.compose.material.icons.Icons
+ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+ import androidx.compose.material.icons.rounded.Check
++import androidx.compose.material.icons.rounded.ContentCopy
++import androidx.compose.material.icons.rounded.Lock
++import androidx.compose.material.icons.rounded.Share
  import androidx.compose.material.icons.rounded.Close
  import androidx.compose.material.icons.rounded.Delete
  import androidx.compose.material.icons.rounded.Download
@@ -2315,7 +2377,7 @@ index 742bc31..81553d5 100644
  import androidx.compose.material3.HorizontalDivider
  import androidx.compose.material3.Icon
  import androidx.compose.material3.IconButton
-@@ -61,10 +64,15 @@ fun formatBytes(b: Long): String = when {
+@@ -61,10 +67,15 @@ fun formatBytes(b: Long): String = when {
  }
  
  @Composable
@@ -2334,7 +2396,7 @@ index 742bc31..81553d5 100644
      }
  }
  
-@@ -77,7 +85,7 @@ private fun SwitchRow(title: String, body: String, on: Boolean, onChange: (Boole
+@@ -77,7 +88,7 @@ private fun SwitchRow(title: String, body: String, on: Boolean, onChange: (Boole
          }
          Switch(
              checked = on, onCheckedChange = onChange,
@@ -2343,7 +2405,7 @@ index 742bc31..81553d5 100644
          )
      }
  }
-@@ -93,18 +101,18 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, openDownloads: () -> Un
+@@ -93,18 +104,18 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, openDownloads: () -> Un
          item {
              Column {
                  IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
@@ -2365,7 +2427,7 @@ index 742bc31..81553d5 100644
                  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                      Text("Keep the next episodes downloaded", style = MaterialTheme.typography.titleSmall)
                      Text(
-@@ -130,7 +138,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, openDownloads: () -> Un
+@@ -130,16 +141,17 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, openDownloads: () -> Un
              }
          }
          item {
@@ -2374,7 +2436,9 @@ index 742bc31..81553d5 100644
                  val ctx = androidx.compose.ui.platform.LocalContext.current
                  val ver = remember { try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" } }
                  Text("Leestn $ver", style = MaterialTheme.typography.titleSmall)
-@@ -139,7 +147,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, openDownloads: () -> Un
+                 Text("Updates come from github.com/Hytyei/Leestn. Leestn checks for a newer version when you open it.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
+                 UpdateControls(vm)
++                app.leestn.data.ArtRepair.lastError?.let { Text("Last cover problem: $it", style = MaterialTheme.typography.labelSmall, color = LColors.Text3) }
              }
          }
          item {
@@ -2383,7 +2447,7 @@ index 742bc31..81553d5 100644
                  Text("Your log, ratings and lists are stored on this device" + (if (vm.connected) " and synced to your server." else ". Join a server to sync them and share with friends."), style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
                  ActionPill(if (confirmErase) "Confirm erase" else "Erase my data", Icons.Rounded.Delete, active = confirmErase) {
                      if (confirmErase) { vm.resetAll(); Downloads.removeAll(Catalog.appContext()); confirmErase = false } else confirmErase = true
-@@ -157,10 +165,7 @@ fun DownloadsScreen(vm: AppViewModel, onBack: () -> Unit, openEp: (String) -> Un
+@@ -157,10 +169,7 @@ fun DownloadsScreen(vm: AppViewModel, onBack: () -> Unit, openEp: (String) -> Un
          item {
              Column {
                  IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
@@ -2395,7 +2459,7 @@ index 742bc31..81553d5 100644
              }
          }
          if (entries.isEmpty()) item {
-@@ -170,7 +175,7 @@ fun DownloadsScreen(vm: AppViewModel, onBack: () -> Unit, openEp: (String) -> Un
+@@ -170,7 +179,7 @@ fun DownloadsScreen(vm: AppViewModel, onBack: () -> Unit, openEp: (String) -> Un
              val ep = Catalog.episode(id)
              Column(Modifier.animateItem()) {
                  Row(
@@ -2404,7 +2468,7 @@ index 742bc31..81553d5 100644
                      verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                  ) {
                      if (ep != null) Poster(showOf(ep.pid), Modifier.size(48.dp), corner = 10.dp) else Box(Modifier.size(48.dp))
-@@ -184,7 +189,6 @@ fun DownloadsScreen(vm: AppViewModel, onBack: () -> Unit, openEp: (String) -> Un
+@@ -184,7 +193,6 @@ fun DownloadsScreen(vm: AppViewModel, onBack: () -> Unit, openEp: (String) -> Un
                      }
                      IconButton(onClick = { vm.removeDownload(id) }) { Icon(if (st is Dl.Done) Icons.Rounded.Delete else Icons.Rounded.Close, "Remove", tint = LColors.Text3) }
                  }
@@ -2412,7 +2476,7 @@ index 742bc31..81553d5 100644
              }
          }
          if (entries.isNotEmpty()) item {
-@@ -203,7 +207,7 @@ private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: Stri
+@@ -203,7 +211,7 @@ private fun TextBox(value: String, onChange: (String) -> Unit, placeholder: Stri
      OutlinedTextField(
          value = value, onValueChange = onChange, singleLine = single, modifier = Modifier.fillMaxWidth(),
          placeholder = { Text(placeholder) }, shape = RoundedCornerShape(14.dp),
@@ -2421,7 +2485,7 @@ index 742bc31..81553d5 100644
      )
  }
  
-@@ -233,15 +237,15 @@ private fun ServerSection(vm: AppViewModel) {
+@@ -233,15 +241,15 @@ private fun ServerSection(vm: AppViewModel) {
      val busy = vm.serverBusy
      val context = LocalContext.current
  
@@ -2440,7 +2504,7 @@ index 742bc31..81553d5 100644
              HorizontalDivider(color = LColors.Line)
              Text("Google account", style = MaterialTheme.typography.titleSmall)
              if (vm.googleEmail.isNotBlank()) {
-@@ -254,7 +258,7 @@ private fun ServerSection(vm: AppViewModel) {
+@@ -254,7 +262,7 @@ private fun ServerSection(vm: AppViewModel) {
                  )
                  if (busy !is Load.Busy) GoogleButton("Connect Google account") { vm.linkGoogle(context) }
              }
@@ -2449,7 +2513,7 @@ index 742bc31..81553d5 100644
              if (busy is Load.Busy) Spinner(Modifier.fillMaxWidth())
              HorizontalDivider(color = LColors.Line)
              Text(
-@@ -276,16 +280,19 @@ private fun ServerSection(vm: AppViewModel) {
+@@ -276,16 +284,19 @@ private fun ServerSection(vm: AppViewModel) {
              val parsed = if (mode == "join") ShareCode.decode(code) else null
              if (mode == "join") {
                  TextBox(code, { code = it }, "Paste the code a friend sent you", single = false)
@@ -2474,7 +2538,7 @@ index 742bc31..81553d5 100644
              if (busy is Load.Busy) Spinner(Modifier.fillMaxWidth())
              else ActionPill(if (mode == "join") "Join" else "Connect", Icons.Rounded.Groups, primary = true) {
                  if (mode == "join") {
-@@ -306,3 +313,69 @@ private fun ServerSection(vm: AppViewModel) {
+@@ -306,3 +317,69 @@ private fun ServerSection(vm: AppViewModel) {
          }
      }
  }
@@ -2747,7 +2811,7 @@ index 5e15f22..e790e65 100644
      }
  }
 diff --git a/app/src/main/java/app/leestn/ui/theme/Theme.kt b/app/src/main/java/app/leestn/ui/theme/Theme.kt
-index a087a2b..67ce4eb 100644
+index a087a2b..11aeeb1 100644
 --- a/app/src/main/java/app/leestn/ui/theme/Theme.kt
 +++ b/app/src/main/java/app/leestn/ui/theme/Theme.kt
 @@ -13,21 +13,29 @@ import androidx.compose.ui.text.font.FontWeight
@@ -2779,9 +2843,9 @@ index a087a2b..67ce4eb 100644
 +    val Text = Color(0xFFF5F4FA)
 +    val Text2 = Color(0xFFBDBACB)
 +    val Text3 = Color(0xFF8F8C9E)
-+    val Accent = Color(0xFF7B5CF5)
-+    val AccentDark = Color(0xFF5B3FD0)
-+    val AccentSoft = Color(0x337B5CF5)
++    val Accent = Color(0xFFF41717)
++    val AccentDark = Color(0xFFB80F0F)
++    val AccentSoft = Color(0x33F41717)
 +    val Red = Accent
 +    val RedDark = AccentDark
 +    val RedSoft = AccentSoft
@@ -2820,7 +2884,7 @@ index a087a2b..67ce4eb 100644
  
  @Composable
 diff --git a/app/src/main/java/app/leestn/widget/WidgetStore.kt b/app/src/main/java/app/leestn/widget/WidgetStore.kt
-index e5e209e..d46844a 100644
+index e5e209e..1010194 100644
 --- a/app/src/main/java/app/leestn/widget/WidgetStore.kt
 +++ b/app/src/main/java/app/leestn/widget/WidgetStore.kt
 @@ -13,7 +13,7 @@ import android.graphics.Shader
@@ -2905,7 +2969,7 @@ index e5e209e..d46844a 100644
      private const val MAX_AREA = 240_000.0
 -    val RED: Int = 0xFFED1C24.toInt()
 -    val BG: Int = 0xFF0E0E10.toInt()
-+    val RED: Int = 0xFF7B5CF5.toInt() // the app's violet accent
++    val RED: Int = 0xFFF41717.toInt() // the app accent red
 +    val BG: Int = 0xFF121117.toInt()
  
      suspend fun bitmap(ctx: Context, url: String, px: Int = 256): Bitmap? {
@@ -2927,7 +2991,7 @@ index e5e209e..d46844a 100644
              val shader = BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
              val scale = maxOf(d.w.toFloat() / src.width, d.h.toFloat() / src.height)
 diff --git a/app/src/main/java/app/leestn/widget/Widgets.kt b/app/src/main/java/app/leestn/widget/Widgets.kt
-index 58e6a2e..b0a3ff4 100644
+index 58e6a2e..7464db4 100644
 --- a/app/src/main/java/app/leestn/widget/Widgets.kt
 +++ b/app/src/main/java/app/leestn/widget/Widgets.kt
 @@ -63,11 +63,12 @@ import kotlin.coroutines.resumeWithException
@@ -2935,7 +2999,7 @@ index 58e6a2e..b0a3ff4 100644
  // Gradients, rounded images, progress bars and charts are painted into bitmaps by WidgetArt (WidgetStore.kt).
  
 -private val RED = ColorProvider(Color(0xFFED1C24))
-+private val ACCENT = ColorProvider(Color(0xFF7B5CF5))
++private val ACCENT = ColorProvider(Color(0xFFF41717))
  private val TEXT = ColorProvider(Color(0xFFF4F4F6))
  private val DIM = ColorProvider(Color(0xFF8E8E99))
  private val WHITE = ColorProvider(Color.White)
@@ -3109,14 +3173,14 @@ index 97f6eec..aaee238 100644
      <corners android:radius="16dp" />
  </shape>
 diff --git a/app/src/main/res/drawable/widget_bar.xml b/app/src/main/res/drawable/widget_bar.xml
-index 8be9acf..76dbd1f 100644
+index 8be9acf..ee51603 100644
 --- a/app/src/main/res/drawable/widget_bar.xml
 +++ b/app/src/main/res/drawable/widget_bar.xml
 @@ -1,5 +1,5 @@
  <?xml version="1.0" encoding="utf-8"?>
  <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
 -    <solid android:color="#FFED1C24" />
-+    <solid android:color="#FF7B5CF5" />
++    <solid android:color="#FFF41717" />
      <corners android:radius="3dp" />
  </shape>
 diff --git a/app/src/main/res/drawable/widget_bg.xml b/app/src/main/res/drawable/widget_bg.xml
@@ -3165,14 +3229,14 @@ index 0000000..993bd12
 +    <corners android:radius="16dp" />
 +</shape>
 diff --git a/app/src/main/res/drawable/widget_btn_primary.xml b/app/src/main/res/drawable/widget_btn_primary.xml
-index 663096f..ae4dc7f 100644
+index 663096f..40843ad 100644
 --- a/app/src/main/res/drawable/widget_btn_primary.xml
 +++ b/app/src/main/res/drawable/widget_btn_primary.xml
 @@ -1,4 +1,4 @@
  <?xml version="1.0" encoding="utf-8"?>
  <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
 -    <solid android:color="#FFED1C24" />
-+    <solid android:color="#FF7B5CF5" />
++    <solid android:color="#FFF41717" />
  </shape>
 diff --git a/app/src/main/res/drawable/widget_card.xml b/app/src/main/res/drawable/widget_card.xml
 index bcd2b26..3370d06 100644
@@ -3196,14 +3260,14 @@ index 663096f..0abdbe6 100644
 +    <solid android:color="#FF4DEBC4" />
  </shape>
 diff --git a/app/src/main/res/drawable/widget_pill.xml b/app/src/main/res/drawable/widget_pill.xml
-index c712268..d0b988d 100644
+index c712268..c406992 100644
 --- a/app/src/main/res/drawable/widget_pill.xml
 +++ b/app/src/main/res/drawable/widget_pill.xml
 @@ -1,5 +1,5 @@
  <?xml version="1.0" encoding="utf-8"?>
  <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
 -    <solid android:color="#FFED1C24" />
-+    <solid android:color="#FF7B5CF5" />
++    <solid android:color="#FFF41717" />
      <corners android:radius="99dp" />
  </shape>
 diff --git a/app/src/main/res/drawable/widget_scrim.xml b/app/src/main/res/drawable/widget_scrim.xml
@@ -3271,14 +3335,14 @@ index 0000000..e49f64c
 + WHERE lower(handle) = 'hytyeileestn'
 +   AND NOT EXISTS (SELECT 1 FROM users u2 WHERE lower(u2.handle) = 'hytyei');
 diff --git a/backend/package.json b/backend/package.json
-index 8fbecf9..d2e8ddd 100644
+index 8fbecf9..7b7ef77 100644
 --- a/backend/package.json
 +++ b/backend/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "leestn-api",
 -  "version": "1.5.9",
-+  "version": "1.6.0",
++  "version": "1.7.0",
    "private": true,
    "type": "module",
    "scripts": {
@@ -3343,7 +3407,7 @@ index 56e7879..4fb275f 100644
      throw new HttpError(409, "That handle is taken");
    }
 diff --git a/backend/src/index.ts b/backend/src/index.ts
-index edaa215..d953efd 100644
+index edaa215..a63c474 100644
 --- a/backend/src/index.ts
 +++ b/backend/src/index.ts
 @@ -3,7 +3,7 @@ import { HttpError, cors, json } from "./util";
@@ -3360,7 +3424,7 @@ index edaa215..d953efd 100644
    let r: RegExpMatchArray | null;
  
 -  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.5.9" });
-+  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.6.0" });
++  if (p === "/" || p === "/health") return json(env, { ok: true, name: "leestn-api", version: "1.7.0" });
  
    // Transcripts (invite key or account token)
    if (p === "/v1/usage" && m === "GET") return getUsage(env, req);
@@ -3884,13 +3948,13 @@ index 0000000..ec8d42c
 +}
 +
 +finish();
-diff --git a/release/NOTES-1.6.0-backend.md b/release/NOTES-1.6.0-backend.md
+diff --git a/release/NOTES-1.7.0-backend.md b/release/NOTES-1.7.0-backend.md
 new file mode 100644
-index 0000000..0fbcd51
+index 0000000..b4f8188
 --- /dev/null
-+++ b/release/NOTES-1.6.0-backend.md
++++ b/release/NOTES-1.7.0-backend.md
 @@ -0,0 +1,39 @@
-+# Leestn 1.6.0 - backend notes (rename, open friends, own feed)
++# Leestn 1.7.0 - backend notes (rename, open friends, own feed)
 +
 +## What changed
 +1. **Username Hytyeileestn -> Hytyei.** Only `users.handle` stores the name. Your login token, Google link, log, ratings, follows and transcripts are all tied to your internal user id, so nothing is lost and the Whisper connection keeps working.
@@ -3923,19 +3987,19 @@ index 0000000..0fbcd51
 +## Risks and manual steps
 +- Open sign-up means strangers who find the Worker URL can create accounts. The daily cap limits this; set `SIGNUPS=invite` to close it.
 +- The old key still works for sign-up AND unlocks transcription. If it leaks, rotate `INVITE_KEY`; already-unlocked users stay unlocked.
-+- Old installs (1.5.x) still work: they send the key, so they stay unlocked. They keep the handle they typed locally until 1.6.0 refreshes it from the server.
++- Old installs (1.5.x) still work: they send the key, so they stay unlocked. They keep the handle they typed locally until 1.7.0 refreshes it from the server.
 +- `ui/FriendsScreen.kt` `InviteCard` (not touched here) now offers only the friends link, and its text says friends get transcripts; the main thread should reword it.
 +- Release script step 8 should check for `hytyei`.
 +
 +## Tests
 +`cd backend && bun run test` (10 files incl. new `friends.ts`, `rename.ts`) and `tsc` typecheck.
-diff --git a/release/RELEASE-1.6.0.md b/release/RELEASE-1.6.0.md
+diff --git a/release/RELEASE-1.7.0.md b/release/RELEASE-1.7.0.md
 new file mode 100644
-index 0000000..6b1507d
+index 0000000..7e9a2a6
 --- /dev/null
-+++ b/release/RELEASE-1.6.0.md
++++ b/release/RELEASE-1.7.0.md
 @@ -0,0 +1,70 @@
-+# Release 1.6.0: new look, widgets, rename, open friends, side episodes
++# Release 1.7.0: new look, widgets, rename, open friends, side episodes
 +
 +**This release changes the app, the server and the database.** Nothing is deleted. Read "Before you start" first.
 +
@@ -3952,13 +4016,13 @@ index 0000000..6b1507d
 +
 +## Database changes (migration 0006, only adds and renames one account)
 +
-+See `NOTES-1.6.0-backend.md` for the detail. In short: adds `users.can_transcribe`, sets it to 1 for everybody who exists, marks `hytyeileestn` as founder and renames it to `hytyei` **only if nobody already uses `hytyei`**. Nothing is deleted.
++See `NOTES-1.7.0-backend.md` for the detail. In short: adds `users.can_transcribe`, sets it to 1 for everybody who exists, marks `hytyeileestn` as founder and renames it to `hytyei` **only if nobody already uses `hytyei`**. Nothing is deleted.
 +
 +| Question | Answer |
 +| --- | --- |
 +| Database migration needed? | **Yes**, `0006_open_friends_transcribe_rename.sql` (the script backs up first and asks for `YES`). |
 +| Worker deployment needed? | **Yes.** |
-+| Android release needed? | **Yes** (app 1.6.0, versionCode 25). |
++| Android release needed? | **Yes** (app 1.7.0, versionCode 26). |
 +| New secret? | No. Optional settings `SIGNUPS` and `MAX_SIGNUPS_PER_DAY` (see the notes). |
 +
 +## Before you start
@@ -3968,7 +4032,7 @@ index 0000000..6b1507d
 +
 +## Release steps
 +
-+1. Apply the patch that matches what you have: `leestn-v1.6.0-from-1.5.9.patch` (or `-from-1.5.8`, `-from-1.5.7`, `-from-1.5.6`, `-from-1.5.5`, `-from-1.0`).
++1. Apply the patch that matches what you have: `leestn-v1.7.0-from-1.5.9.patch` (or `-from-1.5.8`, `-from-1.5.7`, `-from-1.5.6`, `-from-1.5.5`, `-from-1.0`).
 +
 +       git apply --check <patch name>
 +       git apply <patch name>
@@ -3979,14 +4043,14 @@ index 0000000..6b1507d
 +       powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
 +
 +   It targets the existing Worker `leestn-api` and database `leestn` only.
-+3. Check: https://leestn-api.thehdv7.workers.dev/health should say version 1.6.0.
++3. Check: https://leestn-api.thehdv7.workers.dev/health should say version 1.7.0.
 +4. App:
 +
 +       git add -A
-+       git commit -m "1.6.0: new look, widgets, rename, open friends, side episodes"
++       git commit -m "1.7.0: new look, widgets, rename, open friends, side episodes"
 +       git push
-+       git tag v1.6.0
-+       git push origin v1.6.0
++       git tag v1.7.0
++       git push origin v1.7.0
 +
 +   When the GitHub build finishes, open Settings → About → Check for updates.
 +5. Phone: sign in again if asked (same key, or Google). Your profile should read **Hytyei** with the gold badge. Add the new **Last activity** widget from the widget picker.
@@ -4006,7 +4070,7 @@ index 0000000..6b1507d
 +- The TypeScript type check was not re-run in this sandbox (npm was unreachable). The 247 backend tests pass.
 +- Open sign-up lets strangers create (non-transcribing) accounts, capped per day; set `SIGNUPS=invite` to close it. If the invite key leaks, rotate `INVITE_KEY`.
 diff --git a/release/release-backend.ps1 b/release/release-backend.ps1
-index 1518171..c5ef8cd 100644
+index 1518171..c9e2988 100644
 --- a/release/release-backend.ps1
 +++ b/release/release-backend.ps1
 @@ -158,10 +158,10 @@ try {
@@ -4014,11 +4078,11 @@ index 1518171..c5ef8cd 100644
      $f = Capture { npx wrangler d1 execute $ExpectedDbName --remote --command "SELECT handle, role FROM users WHERE role = 'founder'" }
      Write-Host $f
 -    if ($f -notmatch '(?i)hytyei') { Warn 'No account named Hytyei has the founder badge on this database. If you have not created that account yet, the badge can be added later (see RELEASE-1.5.9.md).' }
-+    if ($f -notmatch '(?i)hytyei') { Warn 'No account named Hytyei has the founder badge on this database. If you have not created that account yet, the badge can be added later (see RELEASE-1.6.0.md).' }
++    if ($f -notmatch '(?i)hytyei') { Warn 'No account named Hytyei has the founder badge on this database. If you have not created that account yet, the badge can be added later (see RELEASE-1.7.0.md).' }
      else { Info 'Founder badge is set for Hytyei.' }
  }
  finally { Pop-Location }
  
  Say 'Done'
 -Info 'If anything looks wrong, see release\RELEASE-1.5.9.md, section "If something goes wrong".'
-+Info 'If anything looks wrong, see release\RELEASE-1.6.0.md, section "If something goes wrong".'
++Info 'If anything looks wrong, see release\RELEASE-1.7.0.md, section "If something goes wrong".'

@@ -21,7 +21,7 @@ class LeestnApp : Application(), ImageLoaderFactory {
             .addInterceptor { chain ->
                 val req = chain.request().newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36 Leestn/1.0")
-                    .header("Accept", "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5")
+                    .header("Accept", "image/webp,image/png,image/jpeg,image/*;q=0.8")
                     .build()
                 chain.proceed(req)
             }

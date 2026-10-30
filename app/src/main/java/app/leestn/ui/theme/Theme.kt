@@ -24,9 +24,9 @@ object LColors {
     val Text = Color(0xFFF5F4FA)
     val Text2 = Color(0xFFBDBACB)
     val Text3 = Color(0xFF8F8C9E)
-    val Accent = Color(0xFF7B5CF5)
-    val AccentDark = Color(0xFF5B3FD0)
-    val AccentSoft = Color(0x337B5CF5)
+    val Accent = Color(0xFFF41717)
+    val AccentDark = Color(0xFFB80F0F)
+    val AccentSoft = Color(0x33F41717)
     val Red = Accent
     val RedDark = AccentDark
     val RedSoft = AccentSoft

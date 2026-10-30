@@ -144,7 +144,8 @@ fun Poster(
         Canvas(Modifier.fillMaxSize()) { drawMotif(p.motif) }
         if (hasArt) {
             AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(p.artworkUrl).crossfade(350).build(),
+                model = ImageRequest.Builder(LocalContext.current).data(app.leestn.data.ArtRepair.url(p)).crossfade(350).allowHardware(false).build(),
+                onError = { app.leestn.data.ArtRepair.failed(p, app.leestn.data.ArtRepair.url(p), it.result.throwable) },
                 contentDescription = p.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

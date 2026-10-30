@@ -131,7 +131,7 @@ object WidgetStore {
  */
 object WidgetArt {
     private const val MAX_AREA = 240_000.0
-    val RED: Int = 0xFF7B5CF5.toInt() // the app's violet accent
+    val RED: Int = 0xFFF41717.toInt() // the app accent red
     val BG: Int = 0xFF121117.toInt()
 
     suspend fun bitmap(ctx: Context, url: String, px: Int = 256): Bitmap? {

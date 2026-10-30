@@ -63,7 +63,7 @@ import kotlin.coroutines.resumeWithException
 // Near-black surfaces tinted with each cover's colour, big rounded artwork and one red accent, like the app.
 // Gradients, rounded images, progress bars and charts are painted into bitmaps by WidgetArt (WidgetStore.kt).
 
-private val ACCENT = ColorProvider(Color(0xFF7B5CF5))
+private val ACCENT = ColorProvider(Color(0xFFF41717))
 private val TEXT = ColorProvider(Color(0xFFF4F4F6))
 private val DIM = ColorProvider(Color(0xFF8E8E99))
 private val WHITE = ColorProvider(Color.White)

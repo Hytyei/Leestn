@@ -64,7 +64,7 @@ function Pick([string]$pattern) { $m = [regex]::Match($t, $pattern, 'Multiline')
 $worker = Pick '^\s*name\s*=\s*"([^"]+)"'
 $dbName = Pick '^\s*database_name\s*=\s*"([^"]+)"'
 $dbId   = Pick '^\s*database_id\s*=\s*"([^"]+)"'
-$queues = [regex]::Matches($t, '^\s*queue\s*=\s*"([^"]+)"', 'Multiline') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+$queues = @([regex]::Matches($t, '^\s*queue\s*=\s*"([^"]+)"', 'Multiline') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
 if ($worker -ne $ExpectedWorker) { throw "wrangler.toml says the Worker is '$worker', expected '$ExpectedWorker'. Stopping." }
 if ($dbName -ne $ExpectedDbName) { throw "wrangler.toml says the database is '$dbName', expected '$ExpectedDbName'. Stopping." }
 if ($dbId   -ne $ExpectedDbId)   { throw "wrangler.toml has database id '$dbId', expected '$ExpectedDbId'. Stopping." }
@@ -158,10 +158,10 @@ try {
     Say '8. Check the founder badge (read-only: only looks, changes nothing)'
     $f = Capture { npx wrangler d1 execute $ExpectedDbName --remote --command "SELECT handle, role FROM users WHERE role = 'founder'" }
     Write-Host $f
-    if ($f -notmatch '(?i)hytyei') { Warn 'No account named Hytyei has the founder badge on this database. If you have not created that account yet, the badge can be added later (see RELEASE-1.6.0.md).' }
+    if ($f -notmatch '(?i)hytyei') { Warn 'No account named Hytyei has the founder badge on this database. If you have not created that account yet, the badge can be added later (see RELEASE-1.7.0.md).' }
     else { Info 'Founder badge is set for Hytyei.' }
 }
 finally { Pop-Location }
 
 Say 'Done'
-Info 'If anything looks wrong, see release\RELEASE-1.6.0.md, section "If something goes wrong".'
+Info 'If anything looks wrong, see release\RELEASE-1.7.0.md, section "If something goes wrong".'

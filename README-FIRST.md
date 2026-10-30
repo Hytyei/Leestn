@@ -1,4 +1,4 @@
-# Release 1.6.0: new look, widgets, rename, open friends, side episodes
+# Release 1.7.0: new look, widgets, rename, open friends, side episodes
 
 **This release changes the app, the server and the database.** Nothing is deleted. Read "Before you start" first.
 
@@ -15,13 +15,13 @@
 
 ## Database changes (migration 0006, only adds and renames one account)
 
-See `NOTES-1.6.0-backend.md` for the detail. In short: adds `users.can_transcribe`, sets it to 1 for everybody who exists, marks `hytyeileestn` as founder and renames it to `hytyei` **only if nobody already uses `hytyei`**. Nothing is deleted.
+See `NOTES-1.7.0-backend.md` for the detail. In short: adds `users.can_transcribe`, sets it to 1 for everybody who exists, marks `hytyeileestn` as founder and renames it to `hytyei` **only if nobody already uses `hytyei`**. Nothing is deleted.
 
 | Question | Answer |
 | --- | --- |
 | Database migration needed? | **Yes**, `0006_open_friends_transcribe_rename.sql` (the script backs up first and asks for `YES`). |
 | Worker deployment needed? | **Yes.** |
-| Android release needed? | **Yes** (app 1.6.0, versionCode 25). |
+| Android release needed? | **Yes** (app 1.7.0, versionCode 26). |
 | New secret? | No. Optional settings `SIGNUPS` and `MAX_SIGNUPS_PER_DAY` (see the notes). |
 
 ## Before you start
@@ -31,7 +31,7 @@ See `NOTES-1.6.0-backend.md` for the detail. In short: adds `users.can_transcrib
 
 ## Release steps
 
-1. Apply the patch that matches what you have: `leestn-v1.6.0-from-1.5.9.patch` (or `-from-1.5.8`, `-from-1.5.7`, `-from-1.5.6`, `-from-1.5.5`, `-from-1.0`).
+1. Apply the patch that matches what you have: `leestn-v1.7.0-from-1.5.9.patch` (or `-from-1.5.8`, `-from-1.5.7`, `-from-1.5.6`, `-from-1.5.5`, `-from-1.0`).
 
        git apply --check <patch name>
        git apply <patch name>
@@ -42,14 +42,14 @@ See `NOTES-1.6.0-backend.md` for the detail. In short: adds `users.can_transcrib
        powershell -ExecutionPolicy Bypass -File .\release\release-backend.ps1
 
    It targets the existing Worker `leestn-api` and database `leestn` only.
-3. Check: https://leestn-api.thehdv7.workers.dev/health should say version 1.6.0.
+3. Check: https://leestn-api.thehdv7.workers.dev/health should say version 1.7.0.
 4. App:
 
        git add -A
-       git commit -m "1.6.0: new look, widgets, rename, open friends, side episodes"
+       git commit -m "1.7.0: new look, widgets, rename, open friends, side episodes"
        git push
-       git tag v1.6.0
-       git push origin v1.6.0
+       git tag v1.7.0
+       git push origin v1.7.0
 
    When the GitHub build finishes, open Settings → About → Check for updates.
 5. Phone: sign in again if asked (same key, or Google). Your profile should read **Hytyei** with the gold badge. Add the new **Last activity** widget from the widget picker.

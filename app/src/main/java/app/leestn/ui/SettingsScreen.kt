@@ -147,6 +147,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, openDownloads: () -> Un
                 Text("Leestn $ver", style = MaterialTheme.typography.titleSmall)
                 Text("Updates come from github.com/Hytyei/Leestn. Leestn checks for a newer version when you open it.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
                 UpdateControls(vm)
+                app.leestn.data.ArtRepair.lastError?.let { Text("Last cover problem: $it", style = MaterialTheme.typography.labelSmall, color = LColors.Text3) }
             }
         }
         item {
