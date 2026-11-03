@@ -135,7 +135,7 @@ fun BadgeStrip(badges: List<BadgeProgress>, modifier: Modifier = Modifier) {
 @Composable
 private fun BadgeCard(p: BadgeProgress, modifier: Modifier = Modifier) {
     Column(
-        modifier.card(24.dp).padding(14.dp),
+        modifier.card(16.dp).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -195,14 +195,14 @@ fun BadgeToast(p: BadgeProgress, onDismiss: () -> Unit, onOpen: () -> Unit) {
     Row(
         Modifier.padding(horizontal = 16.dp).fillMaxWidth()
             .scale(0.9f + 0.1f * s.value)
-            .clip(RoundedCornerShape(24.dp)).background(LColors.Surface2)
-            .border(1.dp, tierColor(p.tier).copy(alpha = 0.6f), RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp)).background(LColors.Surface2)
+            .border(1.dp, tierColor(p.tier).copy(alpha = 0.6f), RoundedCornerShape(16.dp))
             .pressable(onClick = onOpen).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         BadgeMedal(p, 48.dp)
         Column(Modifier.weight(1f)) {
-            Text("BADGE UNLOCKED", style = MaterialTheme.typography.labelSmall, color = tierColor(p.tier))
+            Text("Badge unlocked", style = MaterialTheme.typography.labelSmall, color = tierColor(p.tier))
             Text("${p.def.name} ${tierLabel(p.tier)}", style = MaterialTheme.typography.titleMedium)
             Text(p.def.desc, style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

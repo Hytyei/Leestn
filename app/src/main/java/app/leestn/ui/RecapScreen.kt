@@ -70,7 +70,7 @@ fun RecapScreen(vm: AppViewModel, onClose: () -> Unit) {
         st.n > 0 && st.sides.toFloat() / st.n > 0.12f -> "The Deep Diver" to "You listen to the extras, the commentary and the live shows, not just the main story."
         top != null && StatsCalc.completion(vm.log.toMap(), showOf(top.pid)).let { it.first.toFloat() / it.second > 0.7f } -> "The Completionist" to "You finish what you start. Whole seasons, in order."
         st.avg in 0.1..6.8 -> "The Critic" to "Your ratings are tougher than most. A 9 from you means something."
-        else -> "The Explorer" to "You sample widely and follow what grabs you."
+        else -> "The Explorer" to "You sample widely and follow what grabs you"
     }
     val summary = "My $year on Leestn: ${st.n} episodes, $hours hours" + (top?.let { ", top show ${showOf(it.pid).name}" } ?: "") +
         (if (st.rated > 0) ", average rating ${String.format(Locale.US, "%.1f", st.avg)}/10" else "") + ". I am ${persona.first}."
@@ -79,17 +79,17 @@ fun RecapScreen(vm: AppViewModel, onClose: () -> Unit) {
 
     val slides: List<@Composable () -> Unit> = if (st.n == 0) listOf({
         Eyebrow("Leestn recap · $year")
-        Text("Nothing to recap yet.", style = MaterialTheme.typography.displaySmall, color = Color.White)
+        Text("Nothing to recap yet", style = MaterialTheme.typography.displaySmall, color = Color.White)
         Body("Finish an episode or log one from its page. Your recap builds as you listen.")
     }) else buildList {
         add {
             Eyebrow("Leestn recap · $year")
-            Text("Your year in audio, so far.", style = MaterialTheme.typography.displaySmall, color = Color.White)
+            Text("Your year in audio, so far", style = MaterialTheme.typography.displaySmall, color = Color.White)
             Body("1 Jan to ${Dates.short(Dates.today())}. It keeps updating until the year ends.")
         }
         add {
             Eyebrow("Time listened")
-            Text(String.format(Locale.US, "%.1f", animatedInt((st.mins / 6.0).toInt(), 1100) / 10.0), fontSize = 96.sp, lineHeight = 96.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+            Text(String.format(Locale.US, "%.1f", animatedInt((st.mins / 6.0).toInt(), 1100) / 10.0), fontSize = 96.sp, lineHeight = 96.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
             Text("hours across ${st.n} episodes", style = MaterialTheme.typography.titleLarge, color = Color.White)
             Body("About ${Math.round(st.mins / 110.0)} feature films, or ${String.format(Locale.US, "%.1f", st.mins / 1440.0)} days with the volume up. ${st.n - st.sides} main episodes, ${st.sides} side episodes.")
         }
@@ -105,8 +105,8 @@ fun RecapScreen(vm: AppViewModel, onClose: () -> Unit) {
         add {
             Eyebrow("Your highest rated")
             st.top.take(3).forEach { r ->
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${r.entry.r}", fontSize = 38.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, modifier = Modifier.width(54.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${r.entry.r}", fontSize = 38.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.width(54.dp))
                     Column {
                         Text(r.ep.title, style = MaterialTheme.typography.titleMedium, color = Color.White)
                         Text("${showOf(r.ep.pid).name} · ${r.ep.code}", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f))
@@ -128,7 +128,7 @@ fun RecapScreen(vm: AppViewModel, onClose: () -> Unit) {
         }
         add {
             Eyebrow("Share it")
-            Text("See you at year end.", style = MaterialTheme.typography.displaySmall, color = Color.White)
+            Text("See you at year end", style = MaterialTheme.typography.displaySmall, color = Color.White)
             Body(summary)
             ActionPill(if (copied) "Copied" else "Copy summary", Icons.Rounded.ContentCopy, primary = true) {
                 clipboard.setText(AnnotatedString(summary)); copied = true
@@ -161,7 +161,7 @@ fun RecapScreen(vm: AppViewModel, onClose: () -> Unit) {
             Box(Modifier.weight(1f).fillMaxHeight().padding(top = 96.dp).clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { i = (idx + 1).coerceAtMost(slides.size - 1) })
         }
         Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
                 slides.indices.forEach { k ->
                     val seg by animateColorAsState(if (k <= idx) Color.White else Color.White.copy(alpha = 0.25f), tween(300), label = "seg")
                     Box(Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(9.dp)).background(seg))
@@ -175,7 +175,7 @@ fun RecapScreen(vm: AppViewModel, onClose: () -> Unit) {
 }
 
 @Composable
-private fun Eyebrow(t: String) = Text(t.uppercase(), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
+private fun Eyebrow(t: String) = Text(t, style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
 
 @Composable
 private fun Body(t: String) = Text(t, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.85f))

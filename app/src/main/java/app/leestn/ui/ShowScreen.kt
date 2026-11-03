@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.draw.drawBehind
@@ -71,7 +75,7 @@ internal fun ActionPill(label: String, icon: ImageVector, active: Boolean = fals
     Row(
         Modifier.clip(shape).background(bg)
             .border(BorderStroke(1.dp, line), shape)
-            .pressable(onClick = onClick).padding(horizontal = 14.dp, vertical = 9.dp)
+            .pressable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp)
             .animateContentSize(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -86,9 +90,9 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
     LaunchedEffect(pid) { vm.ensureShow(pid) }
     val p = Catalog.show(pid)
     if (p == null) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.statusBarsPadding().padding(16.dp)) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-            Text("This show isn't available.", color = LColors.Text3)
+            Text("This show isn't available", color = LColors.Text3)
         }
         return
     }
@@ -109,25 +113,25 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val tint = rememberArtTint(p.artworkUrl)
+    val tint = rememberArtTint(p.artworkUrl, Color.Transparent)
     LazyColumn(
         state = listState,
         modifier = Modifier.drawBehind {
             val a = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 700f).coerceIn(0f, 1f)
-            drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(tint.copy(alpha = 0.40f * a), androidx.compose.ui.graphics.Color.Transparent), endY = 380.dp.toPx()))
+            drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(tint.copy(alpha = tint.alpha * 0.24f * a), androidx.compose.ui.graphics.Color.Transparent), endY = 420.dp.toPx()))
         },
-        contentPadding = PaddingValues(bottom = 24.dp),
+        contentPadding = PaddingValues(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding(), bottom = 24.dp),
     ) {
         item(key = "head") {
             Box(Modifier.fillMaxWidth()) {
                 IconButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart)) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
                 Column(
-                    Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 20.dp).appear(),
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 20.dp).appear(),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Poster(p, Modifier.width(180.dp).glow(tint, 28.dp, 0.45f), showName = true, corner = 28.dp)
+                    Poster(p, Modifier.width(180.dp), showName = true, corner = 16.dp)
                     Gap(6.dp)
-                    Text("${p.genre.ifBlank { "Podcast" }.uppercase()}${if (p.host.isNotBlank()) " · " + p.host.uppercase() else ""}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    Text("${p.genre.ifBlank { "Podcast" }}${if (p.host.isNotBlank()) " · " + p.host else ""}", style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                     Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
                     vm.showAverage(pid)?.let { avg ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -136,10 +140,10 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
                         }
                     }
                     if (p.loaded) {
-                        Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ColorBlock("Main", "${p.mains.size}", LColors.Lilac, Modifier.width(96.dp))
-                            ColorBlock("Side", "${p.sides.size}", LColors.Mint, Modifier.width(96.dp))
-                            ColorBlock("Seasons", "${p.cats.size}", LColors.Sky, Modifier.width(96.dp))
+                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StatBlock("Main", "${p.mains.size}", Modifier.weight(1f))
+                            StatBlock("Side", "${p.sides.size}", Modifier.weight(1f))
+                            StatBlock("Seasons", "${p.cats.count { it.kind == Kind.MAIN }}", Modifier.weight(1f))
                         }
                     }
                 }
@@ -148,7 +152,7 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
         item(key = "about") {
             val text = p.description.ifBlank { p.tagline }
             Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(tween(Motion.Normal))) {
-                if (text.isNotBlank()) Column(Modifier.fillMaxWidth().card(24.dp).padding(16.dp)) {
+                if (text.isNotBlank()) Column(Modifier.fillMaxWidth().card(16.dp).padding(16.dp)) {
                     Text(text, style = MaterialTheme.typography.bodyMedium, color = LColors.Text2, maxLines = if (more) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
                     if (text.length > 160) {
                         Text(if (more) "Show less" else "Show more", color = LColors.Red, style = MaterialTheme.typography.labelLarge, modifier = Modifier.pressable { more = !more }.padding(vertical = 6.dp))
@@ -173,7 +177,7 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
                     item { ActionPill("List", Icons.Rounded.Bookmarks) { sheet = true } }
                 }
                 if (p.loaded && total > 0) {
-                    Column(Modifier.fillMaxWidth().card(24.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.fillMaxWidth().card(16.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         ThinBar(done / total.toFloat())
                         Text("You have finished $done of $total main episodes", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
                     }
@@ -187,7 +191,7 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
             item(key = "state") {
                 when (load) {
                     is Load.Failed -> ErrorState(load.message, onRetry = { vm.ensureShow(pid, force = true) })
-                    else -> Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    else -> Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         repeat(6) {
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 SkeletonBox(Modifier.size(width = 48.dp, height = 30.dp), 8.dp)
@@ -219,7 +223,7 @@ fun ShowScreen(vm: AppViewModel, pid: String, onBack: () -> Unit, openEp: (Strin
                             Chip("Release order", order == "release") { order = "release" }
                         }
                         Text(
-                            if (order == "story") "Side content sits right after the main episode it fits best." else "Exactly as each episode was released.",
+                            if (order == "story") "Side content sits right after the main episode it fits best" else "Exactly as each episode was released",
                             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
                         )
                     }

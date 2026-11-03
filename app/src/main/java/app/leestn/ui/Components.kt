@@ -128,7 +128,7 @@ fun Poster(
     p: Podcast,
     modifier: Modifier = Modifier,
     ratio: Float = 1f,
-    corner: Dp = 20.dp,
+    corner: Dp = 12.dp,
     showName: Boolean = false,
 ) {
     val shape = RoundedCornerShape(corner)
@@ -144,7 +144,7 @@ fun Poster(
         Canvas(Modifier.fillMaxSize()) { drawMotif(p.motif) }
         if (hasArt) {
             AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(app.leestn.data.ArtRepair.url(p)).crossfade(350).allowHardware(false).build(),
+                model = ImageRequest.Builder(LocalContext.current).data(app.leestn.data.ArtRepair.url(p)).crossfade(200).allowHardware(false).build(),
                 onError = { app.leestn.data.ArtRepair.failed(p, app.leestn.data.ArtRepair.url(p), it.result.throwable) },
                 contentDescription = p.name,
                 contentScale = ContentScale.Crop,
@@ -155,7 +155,6 @@ fun Poster(
                 p.name,
                 modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.ExtraBold,
                 color = Color.White,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
@@ -174,7 +173,7 @@ fun Avatar(name: String, seed: String, model: Any?, size: Dp = 36.dp) {
     val brush = Brush.linearGradient(listOf(Color.hsl(h, 0.65f, 0.55f), Color.hsl((h + 50f) % 360f, 0.6f, 0.3f)))
     val initials = name.trim().split(" ").mapNotNull { w -> w.firstOrNull { c -> c.isLetterOrDigit() } }.take(2).joinToString("").uppercase().ifEmpty { "?" }
     Box(Modifier.size(size).clip(CircleShape).background(brush), contentAlignment = Alignment.Center) {
-        Text(initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size.value * 0.4f).sp)
+        Text(initials, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = (size.value * 0.4f).sp)
         if (model != null) {
             AsyncImage(model = model, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
@@ -202,10 +201,10 @@ fun SectionHeader(title: String, action: String? = null, onAction: () -> Unit = 
                 Modifier.let { if (action != null) it.clip(RoundedCornerShape(10.dp)).pressable(onClick = onAction) else it },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-                if (action != null) Icon(Icons.Rounded.ChevronRight, action, tint = LColors.Text2, modifier = Modifier.size(28.dp))
+                Text(title, style = MaterialTheme.typography.titleLarge)
+                if (action != null) Icon(Icons.Rounded.ChevronRight, action, tint = LColors.Text3, modifier = Modifier.size(24.dp))
             }
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = LColors.Text3)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
         }
     }
 }
@@ -226,7 +225,7 @@ fun RatingPill(r: Int?) {
 fun KindTag(kind: Kind) {
     val main = kind == Kind.MAIN
     Text(
-        if (main) "MAIN STORY" else "SIDE CONTENT",
+        if (main) "Main story" else "Side content",
         modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(if (main) LColors.RedSoft else LColors.SideSoft).padding(horizontal = 8.dp, vertical = 3.dp),
         color = if (main) LColors.Red else LColors.Side,
         style = MaterialTheme.typography.labelSmall,
@@ -257,7 +256,7 @@ fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
             .background(bg)
             .border(BorderStroke(1.dp, line), shape)
             .pressable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         color = fg,
         style = MaterialTheme.typography.labelLarge,
     )
@@ -277,9 +276,9 @@ fun PlayButton(playing: Boolean, modifier: Modifier = Modifier, size: Dp = 36.dp
 
 @Composable
 fun StatTile(value: String, label: String, modifier: Modifier = Modifier) {
-    Column(modifier.card(24.dp).padding(horizontal = 14.dp, vertical = 12.dp)) {
-        Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-        Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+    Column(modifier.card(16.dp).padding(horizontal = 12.dp, vertical = 12.dp)) {
+        Text(value, style = MaterialTheme.typography.headlineSmall)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
     }
 }
 
@@ -295,7 +294,7 @@ fun EpisodeRow(vm: AppViewModel, ep: Episode, onOpen: () -> Unit, ctx: String? =
     val prog = vm.prog[ep.id]
     val isPlaying = vm.playing && vm.playingId == ep.id
     Row(
-        modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 11.dp).animateContentSize(),
+        modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -305,7 +304,7 @@ fun EpisodeRow(vm: AppViewModel, ep: Episode, onOpen: () -> Unit, ctx: String? =
             Text(ep.blurb, style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (ctx != null) Text(ctx, style = MaterialTheme.typography.labelSmall, color = LColors.Side, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             when {
                 entry?.d != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     RatingPill(entry.r)
@@ -332,7 +331,7 @@ fun NextUpItem(vm: AppViewModel, ep: Episode, main: Boolean, hint: String, onOpe
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Poster(p, Modifier.width(44.dp), corner = 8.dp)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             KindTag(if (main) Kind.MAIN else Kind.SIDE)
             Text("${ep.code} · ${ep.title}", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text("$hint · ${Dates.dur(ep.min)}", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)

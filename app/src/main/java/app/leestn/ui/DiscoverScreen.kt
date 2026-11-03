@@ -98,7 +98,7 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
         columns = GridCells.Adaptive(112.dp),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -127,22 +127,11 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
                     ),
                 )
                 AnimatedVisibility(genres.size > 1, enter = fadeIn(tween(Motion.Normal)), exit = fadeOut(tween(Motion.Quick))) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 2.dp)) {
-                        val tints = listOf(LColors.Lilac, LColors.Mint, LColors.Sky)
-                        items(listOf("All") + genres, key = { it }) { g ->
-                            val on = genre == g
-                            val tint = if (g == "All") LColors.Accent else tints[(genres.indexOf(g).coerceAtLeast(0)) % tints.size]
-                            Box(
-                                Modifier.clip(RoundedCornerShape(18.dp)).background(tint.copy(alpha = if (on) 1f else 0.78f))
-                                    .border(BorderStroke(2.dp, if (on) Color.White else Color.Transparent), RoundedCornerShape(18.dp))
-                                    .pressable { genre = g }.padding(horizontal = 18.dp, vertical = 14.dp),
-                            ) {
-                                Text(g, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, color = if (g == "All") Color.White else Color(0xFF14121B), maxLines = 1)
-                            }
-                        }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(listOf("All") + genres, key = { it }) { g -> Chip(g, genre == g) { genre = g } }
                     }
                 }
-                if (searching) Text("Results for “${query.trim()}”", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.animateContentSize())
+                if (searching) Text("Results for “${query.trim()}”", style = MaterialTheme.typography.titleLarge, modifier = Modifier.animateContentSize())
                 else if (vm.forYou.isEmpty()) Text("Trending now", style = MaterialTheme.typography.titleLarge)
             }
         }
@@ -158,7 +147,7 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
             vm.forYou.entries.toList().forEach { (g, list) ->
                 item(key = "fy-$g", span = { GridItemSpan(maxLineSpan) }) {
                     Column(Modifier.animateItem().appear(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Because you like $g", style = MaterialTheme.typography.headlineSmall)
+                        Text("Because you like $g", style = MaterialTheme.typography.titleLarge)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(list.take(14), key = { it.id }) { p -> PosterCard(p, onClick = { openShow(p.id) }, rating = vm.showAverage(p.id)?.first) }
                         }
@@ -167,17 +156,17 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
             }
             if (vm.forYou.isNotEmpty()) {
                 item(key = "trend-title", span = { GridItemSpan(maxLineSpan) }) {
-                    Text("Trending now", style = MaterialTheme.typography.headlineSmall)
+                    Text("Trending now", style = MaterialTheme.typography.titleLarge)
                 }
             }
         }
         if (!searching && genre == "All" && shown.size >= 5) {
             itemsIndexed(shown.take(5), key = { _, p -> "top-" + p.id }, span = { _, _ -> GridItemSpan(maxLineSpan) }) { i, p ->
                 Row(
-                    Modifier.fillMaxWidth().card(24.dp).pressable { openShow(p.id) }.padding(12.dp),
+                    Modifier.fillMaxWidth().card(16.dp).pressable { openShow(p.id) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("${i + 1}", style = MaterialTheme.typography.displaySmall, color = if (i == 0) LColors.Accent else LColors.Text3, modifier = Modifier.width(34.dp))
+                    Text("${i + 1}", style = MaterialTheme.typography.headlineSmall, color = if (i == 0) LColors.Accent else LColors.Text3, modifier = Modifier.width(24.dp))
                     Poster(p, Modifier.size(56.dp), corner = 14.dp)
                     Column(Modifier.weight(1f)) {
                         Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -197,7 +186,7 @@ fun DiscoverScreen(vm: AppViewModel, openShow: (String) -> Unit) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     EmptyState(
                         if (searching) "Nothing found" else "No charts yet",
-                        if (searching) "Search uses Apple's podcast directory, so new or private shows may be missing. Add yours with its RSS feed link." else "Pull the charts again in a moment.",
+                        if (searching) "Search uses Apple's podcast directory, so new or private shows may be missing. Add yours with its RSS feed link." else "Pull the charts again in a moment",
                     )
                     if (searching) ActionPill("Add by RSS or link", Icons.Rounded.Add) { dialog = true }
                 }

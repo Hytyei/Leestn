@@ -57,14 +57,14 @@ import app.leestn.state.Load
 import app.leestn.ui.theme.LColors
 
 @Composable
-fun PosterCard(p: Podcast, onClick: () -> Unit, rating: Double? = null, modifier: Modifier = Modifier.width(124.dp)) {
-    Column(modifier.pressable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+fun PosterCard(p: Podcast, onClick: () -> Unit, rating: Double? = null, modifier: Modifier = Modifier.width(128.dp)) {
+    Column(modifier.pressable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Box {
             Poster(p, Modifier.fillMaxWidth(), showName = true)
             if (rating != null) RatingChip(rating, Modifier.align(Alignment.TopEnd).padding(6.dp))
         }
         Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(p.genre.ifBlank { p.host }.uppercase(), style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(p.genre.ifBlank { p.host }, style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -112,10 +112,10 @@ fun UpNextCard(vm: AppViewModel, ep: Episode, sideCount: Int, onClick: () -> Uni
 /** Spotify-style quick pick: a cover and a name in one rounded tile. */
 @Composable
 private fun QuickTile(vm: AppViewModel, p: Podcast, modifier: Modifier, onClick: () -> Unit) {
-    val tint = rememberArtTint(p.artworkUrl)
+    val tint = rememberArtTint(p.artworkUrl, LColors.Surface2)
     val live = vm.playing && Catalog.episode(vm.playingId ?: "")?.pid == p.id
     Row(
-        modifier.clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.30f), LColors.Surface))).pressable(onClick = onClick),
+        modifier.clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.14f), LColors.Surface))).pressable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Poster(p, Modifier.width(56.dp), corner = 0.dp)
@@ -132,7 +132,7 @@ private fun TopShowRow(rank: Int, p: Podcast, count: Int, max: Int, onClick: () 
         Modifier.padding(horizontal = 16.dp).fillMaxWidth().pressable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("${rank + 1}", style = MaterialTheme.typography.displaySmall, color = if (rank == 0) LColors.Accent else LColors.Text3.copy(alpha = 0.7f), modifier = Modifier.width(34.dp))
+        Text("${rank + 1}", style = MaterialTheme.typography.headlineSmall, color = if (rank == 0) LColors.Accent else LColors.Text3, modifier = Modifier.width(32.dp))
         Poster(p, Modifier.width(52.dp), corner = 14.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -158,7 +158,7 @@ fun HomeScreen(
     openSettings: () -> Unit = {},
     goProfile: () -> Unit = {},
 ) {
-    LaunchedEffect(Unit) { vm.loadTrending(); vm.loadForYou() }
+    LaunchedEffect(Unit) { vm.loadTrending(); vm.loadForYou(); vm.checkUpdate(false) }
     LaunchedEffect(vm.connected) { if (vm.connected) vm.loadFeed() }
     val picks = run {
         val lists = vm.forYou.values.toList()
@@ -166,7 +166,7 @@ fun HomeScreen(
     }
 
     val continuing = vm.prog.keys.toList().mapNotNull { id -> Catalog.episode(id) }
-    val fresh = vm.subs.flatMap { pid -> Catalog.show(pid)?.eps?.take(6) ?: emptyList() }
+    val fresh = vm.subs.flatMap { pid -> Catalog.show(pid)?.eps?.sortedByDescending { it.date }?.take(6) ?: emptyList() }
         .filter { vm.log[it.id]?.d == null && it.audioUrl.isNotBlank() }
         .sortedByDescending { it.date }
         .take(10)
@@ -196,30 +196,30 @@ fun HomeScreen(
     val streak = Streaks.current(dayset, today)
 
     val listState = rememberLazyListState()
-    val ambient = rememberArtTint(continuing.firstOrNull()?.let { showOf(it.pid).artworkUrl } ?: "")
+    val ambient = rememberArtTint(continuing.firstOrNull()?.let { showOf(it.pid).artworkUrl } ?: "", Color.Transparent)
     val hour = remember { java.time.LocalTime.now().hour }
     Box(Modifier.fillMaxSize()) {
     // a glow in the colour of what you were last listening to, fading as you scroll
     Box(
         Modifier.fillMaxWidth().height(360.dp)
             .graphicsLayer { alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 600f).coerceIn(0f, 1f) }
-            .background(Brush.verticalGradient(listOf(ambient.copy(alpha = 0.34f), Color.Transparent))),
+            .background(Brush.verticalGradient(listOf(ambient.copy(alpha = ambient.alpha * 0.2f), Color.Transparent))),
     )
     LazyColumn(state = listState, contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
         item(key = "title") {
-            Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp).appear(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                LeestnLogo()
-                Column(Modifier.appear(1), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(greeting(hour), style = MaterialTheme.typography.displaySmall)
-                    Text(if (continuing.isNotEmpty()) "Pick up where you left off." else "What are we listening to?", style = MaterialTheme.typography.bodyMedium, color = LColors.Text2)
-                }
+            Column(Modifier.statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 12.dp).appear(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(greeting(hour), style = MaterialTheme.typography.displaySmall)
+                Text(if (continuing.isNotEmpty()) "Pick up where you left off" else "What are we listening to?", style = MaterialTheme.typography.bodyMedium, color = LColors.Text2)
             }
         }
-        item(key = "update") { UpdateBanner(vm, openSettings = openSettings) }
+        // an empty item would still take the list spacing, so the banner is only added when it has something to say
+        if ((vm.update as? app.leestn.data.UpdateState.Available)?.let { vm.dismissedUpdate != it.rel.version } == true) {
+            item(key = "update") { UpdateBanner(vm, openSettings = openSettings) }
+        }
         if (nothing) {
             item(key = "welcome") {
                 Column(
-                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp).padding(20.dp).appear(1),
+                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(20.dp).padding(20.dp).appear(1),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("Find something to listen to", style = MaterialTheme.typography.titleLarge)
@@ -234,26 +234,22 @@ fun HomeScreen(
                 Column(Modifier.appear(1), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Your week", subtitle = "Last 7 days against the 7 before")
                     Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ColorBlock("Episodes", "${thisWeek.size}", LColors.Lilac, Modifier.weight(1f), changeText(thisWeek.size, lastWeek.size))
+                        ColorBlock("Episodes", "${thisWeek.size}", LColors.Lilac, Modifier.weight(1f), changeText(thisWeek.size, lastWeek.size) ?: " ")
                         val hNow = thisWeek.sumOf { it.second.min }
                         val hBefore = lastWeek.sumOf { it.second.min }
-                        ColorBlock("Hours", String.format(java.util.Locale.US, "%.1f", hNow / 60.0), LColors.Mint, Modifier.weight(1f), changeText(hNow, hBefore))
+                        ColorBlock("Hours", String.format(java.util.Locale.US, "%.1f", hNow / 60.0), LColors.Mint, Modifier.weight(1f), changeText(hNow, hBefore) ?: " ")
                         val sNow = thisWeek.map { it.second.pid }.distinct().size
                         val sBefore = lastWeek.map { it.second.pid }.distinct().size
-                        ColorBlock("Shows", "$sNow", LColors.Sky, Modifier.weight(1f), changeText(sNow, sBefore))
+                        ColorBlock("Shows", "$sNow", LColors.Sky, Modifier.weight(1f), changeText(sNow, sBefore) ?: " ")
                     }
                 }
             }
         }
-        item(key = "continue") {
-            AnimatedVisibility(
-                visible = continuing.isNotEmpty(),
-                enter = fadeIn(tween(Motion.Normal)) + expandVertically(tween(Motion.Normal)),
-                exit = fadeOut(tween(Motion.Quick)) + shrinkVertically(tween(Motion.Quick)),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (continuing.isNotEmpty()) {
+            item(key = "continue") {
+                Column(Modifier.animateItem(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Continue listening")
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(continuing, key = { it.id }) { ep -> ResumeCard(vm, ep, Modifier.width(300.dp)) { openEp(ep.id) } }
                     }
                 }
@@ -263,7 +259,7 @@ fun HomeScreen(
             item(key = "fresh") {
                 Column(Modifier.appear(2), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("New episodes", subtitle = "From your shows")
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(fresh, key = { it.id }) { ep -> EpisodeCard(vm, ep) { openEp(ep.id) } }
                     }
                 }
@@ -289,7 +285,7 @@ fun HomeScreen(
             item(key = "ups") {
                 Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Up next", subtitle = "In your stories")
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(ups, key = { it.first.id }) { (ep, sides) -> UpNextCard(vm, ep, sides) { openEp(ep.id) } }
                     }
                 }
@@ -297,7 +293,7 @@ fun HomeScreen(
         }
         if (tops.isNotEmpty()) {
             item(key = "tops") {
-                Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Your top shows", subtitle = "By episodes finished")
                     tops.forEachIndexed { i, e ->
                         Catalog.show(e.key)?.let { sp -> TopShowRow(i, sp, e.value, tops.first().value) { openShow(sp.id) } }
@@ -309,7 +305,7 @@ fun HomeScreen(
             item(key = "picks") {
                 Column(Modifier.appear(3), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SectionHeader("Picked for you", action = "Discover", onAction = goDiscover)
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(picks, key = { it.id }) { p -> PosterCard(p, onClick = { openShow(p.id) }, rating = vm.showAverage(p.id)?.first) }
                     }
                 }
@@ -321,11 +317,11 @@ fun HomeScreen(
                 when (val l = vm.trendingLoad) {
                     is Load.Failed -> ErrorState("Couldn't load the charts. ${l.message}", onRetry = { vm.loadTrending(force = true) })
                     else -> if (vm.trending.isEmpty()) {
-                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), userScrollEnabled = false) {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), userScrollEnabled = false) {
                             items(5) { PosterCardSkeleton() }
                         }
                     } else {
-                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(vm.trending, key = { it.id }) { p -> PosterCard(p, onClick = { openShow(p.id) }, rating = vm.showAverage(p.id)?.first) }
                         }
                     }
@@ -336,7 +332,7 @@ fun HomeScreen(
             Column(Modifier.appear(5), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SectionHeader("Friends", action = "Open feed", onAction = goFriends)
                 if (feed.isEmpty()) {
-                    Text("Follow people to see what they listen to and rate.", color = LColors.Text3, modifier = Modifier.padding(horizontal = 16.dp))
+                    Text("Follow people to see what they listen to and rate", color = LColors.Text3, modifier = Modifier.padding(horizontal = 16.dp))
                 }
                 feed.forEach { FeedItem(vm, it, openItem = openItem, openPerson = openPerson) }
             }

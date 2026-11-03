@@ -79,9 +79,9 @@ fun FriendScreen(
         }
         item {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ColorBlock("Episodes", "${pr.episodes}", LColors.Lilac, Modifier.weight(1f))
-                ColorBlock("Hours", String.format(Locale.US, "%.1f", pr.hours), LColors.Mint, Modifier.weight(1f))
-                ColorBlock("Avg rating", if (pr.avgRating != null) String.format(Locale.US, "%.1f", pr.avgRating) else "–", LColors.Sky, Modifier.weight(1f))
+                StatBlock("Episodes", "${pr.episodes}", Modifier.weight(1f))
+                StatBlock("Hours", String.format(Locale.US, "%.1f", pr.hours), Modifier.weight(1f))
+                StatBlock("Avg rating", if (pr.avgRating != null) String.format(Locale.US, "%.1f", pr.avgRating) else "–", Modifier.weight(1f))
             }
         }
         if (pr.badges.isNotEmpty()) item {
@@ -131,7 +131,7 @@ fun FriendScreen(
         }
         item {
             Panel("Recent listens") {
-                if (pr.recent.isEmpty()) Text("Nothing logged yet.", color = LColors.Text3)
+                if (pr.recent.isEmpty()) Text("Nothing logged yet", color = LColors.Text3)
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     pr.recent.forEach { r ->
                         val stub = Podcast(r.showId, r.showName.ifBlank { "Podcast" }, "", "", "", r.feedUrl, r.showArt)

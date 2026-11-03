@@ -10,7 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * When a show's own cover address fails to load, look the show up in Apple's directory and use its cover instead.
+ * When a show's cover address fails to load, use the cover named in its feed, or else look the show up in Apple's directory.
  * The result is remembered for this run. [lastError] holds the most recent load failure so Settings can show it.
  */
 object ArtRepair {
@@ -24,6 +24,10 @@ object ArtRepair {
 
     fun failed(p: Podcast, url: String, error: Throwable?) {
         lastError = "${p.name.ifBlank { p.id }}: ${error?.javaClass?.simpleName ?: "error"} ${error?.message ?: ""} ($url)".take(300)
+        if (p.feedArtworkUrl.isNotBlank() && p.feedArtworkUrl != url) {
+            fixed[p.id] = p.feedArtworkUrl
+            return
+        }
         if (p.name.isBlank() || fixed.containsKey(p.id) || !tried.add(p.id)) return
         scope.launch {
             try {

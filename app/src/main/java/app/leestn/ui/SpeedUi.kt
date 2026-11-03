@@ -28,7 +28,7 @@ fun SpeedDialog(vm: AppViewModel, onClose: () -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
         containerColor = LColors.Surface,
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         title = { Text("Playback speed") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {

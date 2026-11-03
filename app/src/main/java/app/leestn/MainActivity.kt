@@ -33,7 +33,6 @@ import app.leestn.ui.DockTab
 import app.leestn.ui.MyAvatar
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
-import app.leestn.ui.NavIcon
 import app.leestn.ui.NowPlayingSheet
 import app.leestn.ui.OnboardingScreen
 import app.leestn.ui.SettingsScreen
@@ -41,6 +40,7 @@ import app.leestn.ui.DownloadsScreen
 import app.leestn.ui.pressable
 import app.leestn.ui.showOf
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -58,6 +58,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -90,6 +92,7 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
@@ -137,7 +140,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // the app is always dark, so the status bar stays light on it even when the phone is in light mode
+        val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         incoming.value = routeFrom(intent)
         setContent {
             LeestnTheme {
@@ -189,7 +194,7 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
     /** Open something a friend listened to. The show may be new to this device, so it is registered from the feed address first. */
     fun openRemote(epId: String, showId: String, name: String, art: String, feedUrl: String) {
         if (!vm.adoptShow(showId, name, art, feedUrl)) {
-            Toast.makeText(ctx, "That show has no feed address, so it can't be opened.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "That show has no feed address, so it can't be opened", Toast.LENGTH_SHORT).show()
             return
         }
         if (epId.isNotBlank() && Catalog.episode(epId) != null) push("ep:$epId") else push("show:$showId")
@@ -221,7 +226,7 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
 
     Scaffold(
         containerColor = LColors.Bg,
-        // the status bar space is handled by each screen, so Home can paint right up behind it
+        // the status bar space is handled by each screen, so Home, shows and episodes can paint right up behind it
         contentWindowInsets = WindowInsets.navigationBars,
         bottomBar = {
             AnimatedVisibility(
@@ -249,8 +254,8 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
                     Dock(TABS.map { DockTab(it.route, it.label, it.icon) }, selected, onSelect = { goTab(it) }) { r, on ->
                         if (r == "profile") {
                             Box(
-                                Modifier.size(32.dp).clip(CircleShape).border(2.dp, if (on) LColors.Accent else Color.Transparent, CircleShape).padding(2.dp),
-                            ) { MyAvatar(vm, 28.dp) }
+                                Modifier.size(28.dp).clip(CircleShape).border(1.dp, if (on) LColors.Accent else Color.Transparent, CircleShape).padding(2.dp),
+                            ) { MyAvatar(vm, 24.dp) }
                             true
                         } else false
                     }
@@ -258,19 +263,19 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
             }
         },
     ) { pad ->
-        Box(Modifier.fillMaxSize().padding(pad).let { if (inRecap || route == "home") it else it.statusBarsPadding() }) {
+        Box(Modifier.fillMaxSize().padding(pad).let { if (inRecap || route == "home" || route.startsWith("show:") || route.startsWith("ep:")) it else it.statusBarsPadding() }) {
             AnimatedContent(
                 targetState = route,
                 transitionSpec = {
                     val bothTabs = initialState in TAB_ROUTES && targetState in TAB_ROUTES
                     when {
                         bothTabs || targetState == "recap" || initialState == "recap" ->
-                            fadeIn(tween(Motion.Normal, delayMillis = 60)) togetherWith fadeOut(tween(Motion.Quick))
+                            fadeIn(tween(Motion.Quick)) togetherWith fadeOut(tween(Motion.Quick))
                         forward ->
-                            (fadeIn(tween(Motion.Normal, delayMillis = 40)) + slideInHorizontally(tween(Motion.Slow, easing = Motion.Ease)) { it / 7 }) togetherWith
+                            (fadeIn(tween(Motion.Normal)) + slideInHorizontally(tween(Motion.Slow, easing = Motion.Ease)) { it / 7 }) togetherWith
                                 (fadeOut(tween(Motion.Quick)) + slideOutHorizontally(tween(Motion.Normal, easing = Motion.Ease)) { -it / 12 })
                         else ->
-                            (fadeIn(tween(Motion.Normal, delayMillis = 40)) + slideInHorizontally(tween(Motion.Slow, easing = Motion.Ease)) { -it / 12 }) togetherWith
+                            (fadeIn(tween(Motion.Normal)) + slideInHorizontally(tween(Motion.Slow, easing = Motion.Ease)) { -it / 12 }) togetherWith
                                 (fadeOut(tween(Motion.Quick)) + slideOutHorizontally(tween(Motion.Normal, easing = Motion.Ease)) { it / 7 })
                     }
                 },
@@ -309,6 +314,13 @@ fun LeestnApp(vm: AppViewModel, onFirstPlay: () -> Unit = {}, incoming: String? 
                     r == "badges" -> BadgesScreen(vm, onBack = ::pop)
                 }
             }
+            // screens that paint behind the status bar fade out under it, so scrolled text never runs into the clock
+            if (route == "home" || route.startsWith("show:") || route.startsWith("ep:")) {
+                Box(
+                    Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars)
+                        .background(Brush.verticalGradient(listOf(LColors.Bg, LColors.Bg.copy(alpha = 0.72f)))),
+                )
+            }
         }
     }
 
@@ -338,7 +350,7 @@ private fun FinishedSheet(vm: AppViewModel, id: String, openEp: (String) -> Unit
     val nu = remember(id) { Catalog.nextUp(ep) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = LColors.Surface) {
         Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("FINISHED · LOGGED ${Dates.short(entry?.d ?: Dates.today()).uppercase()}", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+            Text("Finished · logged ${Dates.short(entry?.d ?: Dates.today())}", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
             Text(ep.title, style = MaterialTheme.typography.headlineSmall)
             Text("How was it?", color = LColors.Text3)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -358,7 +370,7 @@ private fun FinishedSheet(vm: AppViewModel, id: String, openEp: (String) -> Unit
             nu.side.forEach { s ->
                 NextUpItem(vm, s, main = false, hint = if (ep.kind == Kind.MAIN) "Optional, fits right after ${ep.code}" else "More side content for this point") { openEp(s.id) }
             }
-            if (nu.nextMain == null && nu.side.isEmpty()) Text("That is the end of the story so far.", color = LColors.Text3)
+            if (nu.nextMain == null && nu.side.isEmpty()) Text("That is the end of the story so far", color = LColors.Text3)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { ActionPill("Done", Icons.Rounded.Check, onClick = onDismiss) }
         }
     }

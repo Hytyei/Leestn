@@ -75,7 +75,7 @@ private fun Section(title: String, icon: androidx.compose.ui.graphics.vector.Ima
             }
             Text(title, style = MaterialTheme.typography.titleLarge)
         }
-        Column(Modifier.fillMaxWidth().card(28.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+        Column(Modifier.fillMaxWidth().card(16.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
     }
 }
 
@@ -179,7 +179,7 @@ fun DownloadsScreen(vm: AppViewModel, onBack: () -> Unit, openEp: (String) -> Un
             val ep = Catalog.episode(id)
             Column(Modifier.animateItem()) {
                 Row(
-                    Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().card(24.dp).pressable { if (ep != null) openEp(id) }.padding(10.dp),
+                    Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().card(16.dp).pressable { if (ep != null) openEp(id) }.padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     if (ep != null) Poster(showOf(ep.pid), Modifier.size(48.dp), corner = 10.dp) else Box(Modifier.size(48.dp))
@@ -223,7 +223,7 @@ private fun GoogleButton(label: String, enabled: Boolean = true, onClick: () -> 
         Modifier.clip(shape).background(if (enabled) Color.White else Color.White.copy(alpha = 0.35f)).pressable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+        Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
         Text(label, color = Color(0xFF1F1F1F), style = MaterialTheme.typography.labelLarge)
     }
 }
@@ -284,7 +284,7 @@ private fun ServerSection(vm: AppViewModel) {
             val parsed = if (mode == "join") ShareCode.decode(code) else null
             if (mode == "join") {
                 TextBox(code, { code = it }, "Paste the code a friend sent you", single = false)
-                if (code.isNotBlank() && parsed == null) Text("That doesn't look like a Leestn code.", color = LColors.Err, style = MaterialTheme.typography.bodySmall)
+                if (code.isNotBlank() && parsed == null) Text("That doesn't look like a Leestn code", color = LColors.Err, style = MaterialTheme.typography.bodySmall)
                 if (parsed != null) Text(
                     "Server: " + parsed.first.removePrefix("https://") + if (parsed.second.isBlank()) "\nFriends only. Add the invite key later in Settings to use transcription." else "\nIncludes transcription access.",
                     style = MaterialTheme.typography.bodySmall, color = LColors.Text2,

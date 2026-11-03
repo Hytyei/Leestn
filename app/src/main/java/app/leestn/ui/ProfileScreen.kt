@@ -54,8 +54,8 @@ private val GENRE_COLORS = listOf(LColors.Chart1, LColors.Chart2, LColors.Chart3
 @Composable
 internal fun Panel(title: String, trailing: String? = null, content: @Composable () -> Unit) {
     Column(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
@@ -86,11 +86,11 @@ fun ProfileScreen(
 
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 ScreenTitle("Profile", trailing = { IconButton(onClick = openSettings) { Icon(Icons.Rounded.Settings, "Settings") } })
                 Column(
-                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp).padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp).padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.clickable(onClick = openEditProfile)) { MyAvatar(vm, 76.dp) }
@@ -107,9 +107,9 @@ fun ProfileScreen(
                         }
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("ABOUT ME", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
+                        Text("About me", style = MaterialTheme.typography.labelSmall, color = LColors.Text3)
                         Text(
-                            vm.profileBio.ifBlank { "Add a short bio in Edit profile." },
+                            vm.profileBio.ifBlank { "Add a short bio in Edit profile" },
                             style = MaterialTheme.typography.bodyMedium, color = if (vm.profileBio.isBlank()) LColors.Text3 else LColors.Text2,
                         )
                     }
@@ -143,9 +143,9 @@ fun ProfileScreen(
                         ColorBlock("Avg rating", if (st.rated > 0) String.format(Locale.US, "%.1f", st.avg) else "–", LColors.Sky, Modifier.weight(1f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ColorBlock("Shows", st.pods.size.toString(), LColors.Sky, Modifier.weight(1f))
-                        ColorBlock("Side eps", st.sides.toString(), LColors.Lilac, Modifier.weight(1f))
-                        ColorBlock("Best streak", st.bestStreak.toString(), LColors.Mint, Modifier.weight(1f))
+                        StatBlock("Shows", st.pods.size.toString(), Modifier.weight(1f))
+                        StatBlock("Side eps", st.sides.toString(), Modifier.weight(1f))
+                        StatBlock("Best streak", st.bestStreak.toString(), Modifier.weight(1f))
                     }
                 }
             }
@@ -164,7 +164,7 @@ fun ProfileScreen(
                         changeText(cur, prev)?.let { Chip(it, false) {} }
                     }
                     Text(
-                        if (cur == 0) "Nothing logged yet this month." else "You listened for ${Dates.hours(cur)} so far this month.",
+                        if (cur == 0) "Nothing logged yet this month" else "You listened for ${Dates.hours(cur)} so far this month.",
                         style = MaterialTheme.typography.bodyMedium, color = LColors.Text2,
                     )
                 }
@@ -229,7 +229,7 @@ fun ProfileScreen(
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text("${rank + 1}", style = MaterialTheme.typography.headlineSmall, color = if (rank == 0) LColors.Accent else LColors.Text3, modifier = Modifier.width(30.dp))
                                 Poster(showOf(x.pid), Modifier.width(48.dp), corner = 14.dp)
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(showOf(x.pid).name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         vm.showAverage(x.pid)?.let { RatingChip(it.first, Modifier.padding(end = 8.dp)) }

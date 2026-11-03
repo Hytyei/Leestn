@@ -32,7 +32,7 @@ fun UpdateControls(vm: AppViewModel) {
             UpdateState.Idle -> ActionPill("Check for updates", Icons.Rounded.SystemUpdate) { vm.checkUpdate(true) }
             UpdateState.Checking -> Text("Checking…", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
             UpdateState.UpToDate -> {
-                Text("You have the latest version.", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
+                Text("You have the latest version", style = MaterialTheme.typography.bodySmall, color = LColors.Text3)
                 ActionPill("Check again", Icons.Rounded.SystemUpdate) { vm.checkUpdate(true) }
             }
             is UpdateState.Available -> {
@@ -59,11 +59,10 @@ fun UpdateControls(vm: AppViewModel) {
 /** A slim banner at the top of Home when a newer version is available. */
 @Composable
 fun UpdateBanner(vm: AppViewModel, openSettings: () -> Unit, modifier: Modifier = Modifier) {
-    LaunchedEffect(Unit) { vm.checkUpdate(false) }
     val u = vm.update as? UpdateState.Available ?: return
     if (vm.dismissedUpdate == u.rel.version) return
     Row(
-        modifier.fillMaxWidth().padding(horizontal = 16.dp).card(24.dp, LColors.Surface2)
+        modifier.fillMaxWidth().padding(horizontal = 16.dp).card(16.dp, LColors.Surface2)
             .pressable(onClick = openSettings)
             .padding(start = 14.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,

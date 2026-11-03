@@ -104,6 +104,7 @@ object Catalog {
             cats = res.cats,
             description = plain.ifBlank { hint.description },
             language = parsed.language,
+            feedArtworkUrl = parsed.imageUrl,
         )
     }
 }

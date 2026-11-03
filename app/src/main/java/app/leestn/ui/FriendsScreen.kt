@@ -58,7 +58,7 @@ import kotlinx.coroutines.delay
 fun FeedItem(vm: AppViewModel, e: RFeedItem, openItem: (RFeedItem) -> Unit, openPerson: (String) -> Unit) {
     val show = Podcast(e.showId, e.showName.ifBlank { "Podcast" }, "", "", "", e.feedUrl, e.showArt)
     Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).padding(14.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp).padding(16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(Modifier.clickable { openPerson(e.handle) }) { PersonAvatar(vm, e.handle, e.name, e.avatarV, 40.dp) }
@@ -89,7 +89,7 @@ fun FeedItem(vm: AppViewModel, e: RFeedItem, openItem: (RFeedItem) -> Unit, open
 @Composable
 private fun PersonRow(vm: AppViewModel, f: RPerson, openPerson: (String) -> Unit) {
     Row(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).clickable { openPerson(f.handle) }.padding(12.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp).clickable { openPerson(f.handle) }.padding(12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PersonAvatar(vm, f.handle, f.name, f.avatarV, 42.dp)
@@ -112,7 +112,7 @@ fun InviteCard(vm: AppViewModel, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     Column(
-        modifier.fillMaxWidth().card(24.dp).padding(16.dp),
+        modifier.fillMaxWidth().card(16.dp).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Invite friends", style = MaterialTheme.typography.titleMedium)
@@ -143,10 +143,10 @@ fun InviteCard(vm: AppViewModel, modifier: Modifier = Modifier) {
 @Composable
 fun FriendsScreen(vm: AppViewModel, openItem: (RFeedItem) -> Unit, openPerson: (String) -> Unit, openSettings: () -> Unit) {
     if (!vm.connected) {
-        Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             ScreenTitle("Friends", subtitle = "See what people you follow listen to")
             Column(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp, LColors.Surface).padding(20.dp).appear(),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp, LColors.Surface).padding(20.dp).appear(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Icon(Icons.Rounded.Groups, null, tint = LColors.Accent)
@@ -174,7 +174,7 @@ fun FriendsScreen(vm: AppViewModel, openItem: (RFeedItem) -> Unit, openPerson: (
 
     LazyColumn(contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 ScreenTitle("Friends", subtitle = if (tab == "feed") "What you and your friends listened to" else "Find and follow people")
                 PillTabs(listOf("Feed", "People"), if (tab == "feed") 0 else 1, { tab = if (it == 0) "feed" else "people" }, icons = listOf(Icons.Rounded.Groups, Icons.Rounded.Search))
             }
@@ -205,7 +205,7 @@ fun FriendsScreen(vm: AppViewModel, openItem: (RFeedItem) -> Unit, openPerson: (
                 load is Load.Busy && vm.people.isEmpty() -> item { Spinner(Modifier.fillMaxWidth().padding(24.dp)) }
                 vm.people.isEmpty() -> item {
                     Text(
-                        if (query.isBlank()) "No one else has joined yet. Friends can sign up in the app and then find you here." else "No one matches that.",
+                        if (query.isBlank()) "No one else has joined yet. Friends can sign up in the app and then find you here." else "No one matches that",
                         color = LColors.Text3, modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }

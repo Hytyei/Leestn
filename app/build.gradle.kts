@@ -23,9 +23,13 @@ android {
         applicationId = "app.leestn"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "1.7.0"
+        versionCode = 27
+        versionName = "1.7.1"
+        // the runner built into Android, so device tests need no extra libraries
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
     }
+    useLibrary("android.test.runner")
+    useLibrary("android.test.base")
 
     signingConfigs {
         if (releaseStore != null) {

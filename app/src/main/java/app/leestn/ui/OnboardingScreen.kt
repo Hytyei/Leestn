@@ -39,7 +39,7 @@ import app.leestn.ui.theme.LColors
 fun GenrePicker(selected: List<String>, onToggle: (String) -> Unit, modifier: Modifier = Modifier) {
     FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Genres.all.forEachIndexed { i, g ->
-            Box(Modifier.appear(i, step = 25, maxDelay = 500)) { Chip(g, g in selected) { onToggle(g) } }
+            Box(Modifier.appear(i, step = 10)) { Chip(g, g in selected) { onToggle(g) } }
         }
     }
 }
@@ -49,17 +49,16 @@ fun GenrePicker(selected: List<String>, onToggle: (String) -> Unit, modifier: Mo
 fun OnboardingScreen(vm: AppViewModel) {
     val picked = remember { mutableStateListOf<String>() }
     Box(Modifier.fillMaxSize().background(LColors.Bg)) {
-        Box(Modifier.fillMaxWidth().height(320.dp).background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(LColors.Accent.copy(alpha = 0.30f), androidx.compose.ui.graphics.Color.Transparent))))
         Column(
             Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 40.dp, bottom = 140.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(Modifier.appear(0), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 LeestnLogo()
             }
             Text("What do you listen to?", style = MaterialTheme.typography.displaySmall, modifier = Modifier.appear(1))
             Text(
-                "Pick a few favourites. Discover will suggest real shows from them, and you can change this any time in Settings.",
+                "Pick a few favourites and Discover will suggest shows from them. You can change this any time in Settings.",
                 style = MaterialTheme.typography.bodyLarge, color = LColors.Text2, modifier = Modifier.appear(2),
             )
             Gap(6.dp)

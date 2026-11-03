@@ -34,9 +34,9 @@ fun FounderTag(role: String, modifier: Modifier = Modifier) {
     if (role != "founder") return
     Row(
         modifier.clip(RoundedCornerShape(99.dp)).background(FounderGold.copy(alpha = 0.16f)).padding(horizontal = 9.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Icon(Icons.Rounded.Verified, null, tint = FounderGold, modifier = Modifier.size(14.dp))
-        Text("VERIFIED FOUNDER", style = MaterialTheme.typography.labelSmall, color = FounderGold)
+        Text("Verified founder", style = MaterialTheme.typography.labelSmall, color = FounderGold)
     }
 }

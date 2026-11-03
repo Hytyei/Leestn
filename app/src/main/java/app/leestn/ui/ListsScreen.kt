@@ -88,15 +88,15 @@ fun ListsScreen(vm: AppViewModel, openList: (String) -> Unit, openDownloads: () 
     val offline = app.leestn.data.Downloads.state.values.count { it is app.leestn.data.Dl.Done }
     LazyColumn(
         contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
         item { ScreenTitle("Lists", Modifier.appear(), subtitle = "${all.size} list${if (all.size == 1) "" else "s"}") }
         item {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ColorBlock("Lists", "${all.size}", LColors.Lilac, Modifier.weight(1f))
-                ColorBlock("Items", "${all.sumOf { it.items.size }}", LColors.Mint, Modifier.weight(1f))
-                ColorBlock("Offline", "$offline", LColors.Sky, Modifier.weight(1f))
+                StatBlock("Lists", "${all.size}", Modifier.weight(1f))
+                StatBlock("Items", "${all.sumOf { it.items.size }}", Modifier.weight(1f))
+                StatBlock("Offline", "$offline", Modifier.weight(1f))
             }
         }
         item {
@@ -116,7 +116,7 @@ fun ListsScreen(vm: AppViewModel, openList: (String) -> Unit, openDownloads: () 
         }
         item {
             Row(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).pressable(onClick = openDownloads).padding(16.dp),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp).pressable(onClick = openDownloads).padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Icon(Icons.Rounded.Download, null, tint = LColors.Accent)
@@ -129,12 +129,12 @@ fun ListsScreen(vm: AppViewModel, openList: (String) -> Unit, openDownloads: () 
         }
         item { PillTabs(listOf("All", "Shows", "Episodes"), tab, { tab = it }) }
         if (shown.isEmpty()) item {
-            Text("No lists here yet.", color = LColors.Text3, modifier = Modifier.padding(horizontal = 16.dp))
+            Text("No lists here yet", color = LColors.Text3, modifier = Modifier.padding(horizontal = 16.dp))
         }
         items(shown, key = { it.id }) { l ->
             Row(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().animateItem().card(24.dp).pressable { openList(l.id) }.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().animateItem().card(16.dp).pressable { openList(l.id) }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Fan(l)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -154,7 +154,7 @@ fun ListDetailScreen(vm: AppViewModel, listId: String, onBack: () -> Unit, openE
     if (list == null) {
         Column(Modifier.padding(16.dp)) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-            Text("This list no longer exists.", color = LColors.Text3)
+            Text("This list no longer exists", color = LColors.Text3)
         }
         return
     }

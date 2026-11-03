@@ -1,12 +1,7 @@
 package app.leestn.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,10 +52,10 @@ import app.leestn.state.AppViewModel
 import app.leestn.ui.theme.LColors
 import java.time.LocalDate
 
-// The shared look: ink-violet surfaces with big rounded corners, pill controls, colour blocks for numbers and a floating dock.
+// The shared look: quiet graphite cards, pill controls, a colour block where a screen's numbers lead, and a bottom dock.
 
 /** A soft rounded surface. */
-fun Modifier.card(corner: Dp = 24.dp, color: Color = LColors.Surface): Modifier = this.clip(RoundedCornerShape(corner)).background(color)
+fun Modifier.card(corner: Dp = 16.dp, color: Color = LColors.Surface): Modifier = this.clip(RoundedCornerShape(corner)).background(color)
 
 /** Page title row: a big title with optional actions on the right. */
 @Composable
@@ -84,12 +79,12 @@ fun PillTabs(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, modif
             val line by animateColorAsState(if (on) LColors.Accent else LColors.Surface3, tween(Motion.Quick), label = "tabLine")
             val shape = RoundedCornerShape(99.dp)
             Row(
-                Modifier.clip(shape).background(bg).border(BorderStroke(1.5.dp, line), shape).pressable { onSelect(i) }.padding(horizontal = 16.dp, vertical = 9.dp),
+                Modifier.clip(shape).background(bg).border(BorderStroke(1.dp, line), shape).pressable { onSelect(i) }.padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 val ic = icons.getOrNull(i)
                 if (ic != null) Icon(ic, null, tint = if (on) Color.White else LColors.Text2, modifier = Modifier.size(18.dp))
-                Text(l, style = MaterialTheme.typography.labelLarge, color = if (on) Color.White else LColors.Text, fontWeight = FontWeight.Bold)
+                Text(l, style = MaterialTheme.typography.labelLarge, color = if (on) Color.White else LColors.Text2)
             }
         }
     }
@@ -98,11 +93,21 @@ fun PillTabs(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, modif
 /** Last.fm style block: a colour, a small label, a big number and an optional change. Dark text on the bright colour. */
 @Composable
 fun ColorBlock(label: String, value: String, color: Color, modifier: Modifier = Modifier, change: String? = null) {
-    val ink = Color(0xFF14121B)
-    Column(modifier.clip(RoundedCornerShape(20.dp)).background(color).padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = ink.copy(alpha = 0.7f), maxLines = 1)
-        Text(value, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = ink, maxLines = 1, lineHeight = 34.sp)
-        Text(change ?: " ", style = MaterialTheme.typography.labelSmall, color = ink.copy(alpha = 0.75f), maxLines = 1)
+    val ink = Color(0xFF141416)
+    Column(modifier.clip(RoundedCornerShape(16.dp)).background(color).padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = ink.copy(alpha = 0.72f), maxLines = 1)
+        Text(value, fontSize = 28.sp, fontWeight = FontWeight.SemiBold, color = ink, maxLines = 1, lineHeight = 32.sp)
+        if (change != null) Text(change, style = MaterialTheme.typography.labelSmall, color = ink.copy(alpha = 0.76f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** The same shape as [ColorBlock] in plain surface colours, for screens where the numbers support the content. */
+@Composable
+fun StatBlock(label: String, value: String, modifier: Modifier = Modifier, change: String? = null, surface: Color = LColors.Surface) {
+    Column(modifier.clip(RoundedCornerShape(16.dp)).background(surface).padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 1)
+        Text(value, style = MaterialTheme.typography.headlineSmall, maxLines = 1)
+        if (change != null) Text(change, style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -110,7 +115,7 @@ fun ColorBlock(label: String, value: String, color: Color, modifier: Modifier = 
 fun changeText(now: Int, before: Int): String? {
     if (before <= 0) return if (now > 0) "new this week" else null
     val pct = Math.round((now - before) * 100f / before)
-    return (if (pct >= 0) "▲ " else "▼ ") + Math.abs(pct) + "% vs last week"
+    return (if (pct >= 0) "+" else "−") + Math.abs(pct) + "% vs last week"
 }
 
 object Streaks {
@@ -131,18 +136,18 @@ object Streaks {
 @Composable
 fun StreakCard(streak: Int, week: List<Boolean>, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
     Row(
-        modifier.card(28.dp).pressable(onClick = onClick).padding(horizontal = 18.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+        modifier.card(16.dp).pressable(onClick = onClick).padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(Icons.Rounded.LocalFireDepartment, null, tint = if (streak > 0) Color(0xFFFFA43B) else LColors.Text3, modifier = Modifier.size(40.dp))
-        Text("$streak-day streak", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.LocalFireDepartment, null, tint = if (streak > 0) LColors.Accent else LColors.Text3, modifier = Modifier.size(28.dp))
+        Text("$streak-day streak", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             week.forEachIndexed { i, on ->
                 val today = i == week.lastIndex
                 Box(
                     Modifier.width(8.dp).height(if (today) 28.dp else 22.dp).clip(RoundedCornerShape(99.dp))
                         .background(if (on) LColors.Accent else LColors.Surface3)
-                        .let { if (today) it.border(1.5.dp, LColors.Lilac, RoundedCornerShape(99.dp)) else it },
+                        .let { if (today) it.border(1.dp, LColors.Text2, RoundedCornerShape(99.dp)) else it },
                 )
             }
         }
@@ -162,8 +167,8 @@ fun ResumeCard(vm: AppViewModel, ep: Episode, modifier: Modifier = Modifier, onO
     var menu by remember { mutableStateOf(false) }
     Column(modifier.pressable(onClick = onOpen), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Box {
-            Poster(p, Modifier.fillMaxWidth(), ratio = 1.6f, corner = 26.dp)
-            Box(Modifier.matchParentSize().clip(RoundedCornerShape(26.dp)).background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))))
+            Poster(p, Modifier.fillMaxWidth(), ratio = 1.6f, corner = 16.dp)
+            Box(Modifier.matchParentSize().clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))))
             if (now) Equalizer(true, Modifier.align(Alignment.TopStart).padding(16.dp), color = Color.White, height = 16.dp)
             Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) {
                 Box(Modifier.size(36.dp).clip(CircleShape).pressable { menu = true }, contentAlignment = Alignment.Center) {
@@ -187,7 +192,7 @@ fun ResumeCard(vm: AppViewModel, ep: Episode, modifier: Modifier = Modifier, onO
         Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
                 Text(p.name.ifBlank { "Podcast" }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${ep.code} • ${ep.title}", style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${ep.code} · ${ep.title}", style = MaterialTheme.typography.bodySmall, color = LColors.Text3, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box(Modifier.size(40.dp).clip(CircleShape).pressable { vm.logListen(ep.id, Dates.today()) }, contentAlignment = Alignment.Center) {
                 Icon(Icons.Rounded.RadioButtonUnchecked, "Mark as listened", tint = LColors.Text2, modifier = Modifier.size(30.dp))
@@ -199,22 +204,22 @@ fun ResumeCard(vm: AppViewModel, ep: Episode, modifier: Modifier = Modifier, onO
 /** One tab in the dock. */
 class DockTab(val route: String, val label: String, val icon: ImageVector)
 
-/** Floating bottom bar: icons only, the selected one lights up and shows its name. The last tab can show a picture instead of an icon. */
+/** Bottom bar with a fixed layout, so switching tabs never moves anything. The last tab can show a picture instead of an icon. */
 @Composable
 fun Dock(tabs: List<DockTab>, selected: String, onSelect: (String) -> Unit, picture: @Composable (String, Boolean) -> Boolean) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)).background(Color(0xFF0D0C12))
-            .navigationBarsPadding().padding(horizontal = 8.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)).background(LColors.Surface)
+            .navigationBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically,
     ) {
         tabs.forEach { t ->
             val on = t.route == selected
             val tint by animateColorAsState(if (on) LColors.Accent else LColors.Text3, tween(Motion.Quick), label = "dockTint")
-            Column(Modifier.weight(1f).pressable { onSelect(t.route) }.padding(vertical = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (!picture(t.route, on)) Icon(t.icon, t.label, tint = tint, modifier = Modifier.size(28.dp))
-                AnimatedVisibility(on, enter = fadeIn(tween(Motion.Normal)) + expandVertically(tween(Motion.Normal)), exit = fadeOut(tween(Motion.Quick)) + shrinkVertically(tween(Motion.Quick))) {
-                    Text(t.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
+            Column(Modifier.weight(1f).pressable { onSelect(t.route) }.padding(vertical = 2.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Box(Modifier.height(28.dp), contentAlignment = Alignment.Center) {
+                    if (!picture(t.route, on)) Icon(t.icon, null, tint = tint, modifier = Modifier.size(24.dp))
                 }
+                Text(t.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
             }
         }
     }

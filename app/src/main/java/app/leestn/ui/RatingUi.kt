@@ -136,9 +136,9 @@ fun RatingGraph(vm: AppViewModel, p: Podcast, group: Boolean, openEp: (String) -
 @Composable
 private fun StatBox(title: String, value: Double?, sub: String, modifier: Modifier) {
     Column(modifier.clip(RoundedCornerShape(14.dp)).background(LColors.Surface2).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title.uppercase(), style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 1)
+        Text(title, style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 1)
         if (value == null) Text("–", style = MaterialTheme.typography.headlineSmall, color = LColors.Text3)
-        else Text(fmtRating(value), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = ratingColor(value))
+        else Text(fmtRating(value), style = MaterialTheme.typography.headlineSmall, color = ratingColor(value))
         Text(sub, style = MaterialTheme.typography.labelSmall, color = LColors.Text3, maxLines = 1)
     }
 }
@@ -155,14 +155,14 @@ fun ShowRatingsPanel(vm: AppViewModel, p: Podcast, openEp: (String) -> Unit) {
     val groupN = if (g?.showAvg != null) g.showN else g?.epsN ?: 0
 
     Column(
-        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(24.dp).padding(14.dp),
+        Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Ratings", style = MaterialTheme.typography.titleLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ColorBlock("Episodes avg", mine?.let { fmtRating(it.first) } ?: "–", LColors.Lilac, Modifier.weight(1f), if (mine == null) "rate some episodes" else "${mine.second} rated")
-            ColorBlock("Your rating", own?.toString() ?: "–", LColors.Mint, Modifier.weight(1f), if (own == null) "not rated" else "of the show")
-            if (vm.connected) ColorBlock("Server avg", groupValue?.let { fmtRating(it) } ?: "–", LColors.Sky, Modifier.weight(1f), if (groupValue == null) "no ratings yet" else "$groupN rating${if (groupN == 1) "" else "s"}")
+            StatBlock("Episodes avg", mine?.let { fmtRating(it.first) } ?: "–", Modifier.weight(1f), if (mine == null) "Rate some episodes" else "${mine.second} rated", LColors.Surface2)
+            StatBlock("Your rating", own?.toString() ?: "–", Modifier.weight(1f), if (own == null) "Not rated" else "Of the show", LColors.Surface2)
+            if (vm.connected) StatBlock("Server avg", groupValue?.let { fmtRating(it) } ?: "–", Modifier.weight(1f), if (groupValue == null) "No ratings yet" else "$groupN rating${if (groupN == 1) "" else "s"}", LColors.Surface2)
         }
         Text("Rate the whole show", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -171,7 +171,7 @@ fun ShowRatingsPanel(vm: AppViewModel, p: Podcast, openEp: (String) -> Unit) {
                 Box(
                     Modifier.weight(1f).height(36.dp).clip(RoundedCornerShape(10.dp)).background(if (on) ratingColor(own!!.toDouble()) else LColors.Surface3).pressable { vm.rateShow(p.id, n) },
                     contentAlignment = Alignment.Center,
-                ) { Text("$n", color = if (on) Color(0xFF101010) else LColors.Text3, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                ) { Text("$n", color = if (on) Color(0xFF101010) else LColors.Text3, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
             }
         }
         if (p.loaded && p.mains.isNotEmpty()) {

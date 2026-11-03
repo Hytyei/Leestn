@@ -81,8 +81,8 @@ fun MiniPlayer(vm: AppViewModel, meta: NowMeta, onOpen: () -> Unit) {
     val poster = nowPoster(meta)
     val tint = rememberArtTint(poster.artworkUrl)
     val btn = lerp(tint, Color.Black, 0.25f)
-    val artScale by animateFloatAsState(if (vm.playing) 1f else 0.9f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "miniArt")
-    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 6.dp, bottom = 4.dp).clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.40f), LColors.Surface2))).clickable(onClick = onOpen)) {
+    val artScale by animateFloatAsState(if (vm.playing) 1f else 0.96f, tween(Motion.Slow, easing = Motion.Ease), label = "miniArt")
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 6.dp, bottom = 4.dp).clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(tint.copy(alpha = 0.18f), LColors.Surface2))).clickable(onClick = onOpen)) {
         GlowBar(frac, color = tint, height = 2.dp, animate = false)
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Poster(poster, Modifier.width(40.dp).graphicsLayer { scaleX = artScale; scaleY = artScale }, corner = 8.dp)
@@ -95,7 +95,7 @@ fun MiniPlayer(vm: AppViewModel, meta: NowMeta, onOpen: () -> Unit) {
             }
             Equalizer(vm.playing, color = tint, height = 16.dp)
             Text("−15", modifier = Modifier.clip(RoundedCornerShape(8.dp)).pressable { vm.skip(-15) }.padding(8.dp), style = MaterialTheme.typography.labelMedium, color = LColors.Text2)
-            PlayButton(vm.playing, Modifier.pulseWhen(vm.playing, tint), size = 42.dp, filled = true, container = btn) { vm.togglePlay() }
+            PlayButton(vm.playing, size = 40.dp, filled = true, container = btn) { vm.togglePlay() }
             Text("+30", modifier = Modifier.clip(RoundedCornerShape(8.dp)).pressable { vm.skip(30) }.padding(8.dp), style = MaterialTheme.typography.labelMedium, color = LColors.Text2)
         }
     }
@@ -128,16 +128,16 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
     val poster = nowPoster(meta)
     val tint = rememberArtTint(poster.artworkUrl)
     val btn = lerp(tint, Color.Black, 0.25f)
-    // the cover swells while playing and settles back when paused
-    val artScale by animateFloatAsState(if (vm.playing) 1f else 0.86f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessLow), label = "art")
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = LColors.Surface, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)) {
-      Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.5f), LColors.Surface)))) {
+    // the cover settles back a touch when paused
+    val artScale by animateFloatAsState(if (vm.playing) 1f else 0.96f, tween(Motion.Normal, easing = Motion.Ease), label = "art")
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = state, containerColor = LColors.Surface, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
+      Box(Modifier.fillMaxWidth()) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 24.dp).padding(top = 8.dp, bottom = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(Modifier.fillMaxWidth(0.7f).graphicsLayer { scaleX = artScale; scaleY = artScale }.glow(tint, 36.dp, 0.55f)) {
-                Poster(poster, Modifier.fillMaxWidth(), corner = 28.dp)
+            Box(Modifier.fillMaxWidth(0.7f).graphicsLayer { scaleX = artScale; scaleY = artScale }) {
+                Poster(poster, Modifier.fillMaxWidth(), corner = 16.dp)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(meta.title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -163,7 +163,7 @@ fun NowPlayingSheet(vm: AppViewModel, meta: NowMeta, onClose: () -> Unit, openEp
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                 RoundText(speedText(vm.speed)) { speedOpen = true }
                 RoundText("−15") { vm.skip(-15) }
-                PlayButton(vm.playing, Modifier.pulseWhen(vm.playing, tint), size = 72.dp, filled = true, container = btn) { vm.togglePlay() }
+                PlayButton(vm.playing, size = 72.dp, filled = true, container = btn) { vm.togglePlay() }
                 RoundText("+30") { vm.skip(30) }
                 Box(Modifier.size(52.dp).clip(CircleShape).background(if (vm.sleepEndsAt > 0L) LColors.RedSoft else LColors.Surface3).pressable { sleepOpen = !sleepOpen }, contentAlignment = Alignment.Center) {
                     Icon(Icons.Rounded.Bedtime, "Sleep timer", tint = if (vm.sleepEndsAt > 0L) LColors.Red else Color.White)

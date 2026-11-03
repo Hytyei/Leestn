@@ -1,11 +1,13 @@
 package app.leestn.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -13,17 +15,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// Deep ink-violet canvas, soft lifted cards, one vivid violet accent. Mint, lilac and sky are the colour blocks for stats.
+// Graphite canvas, quiet raised surfaces and the one brand red. Mint, lilac and sky are kept for the few stat blocks that lead a screen.
 // Names Red/RedDark/RedSoft are kept so older code keeps working: they now mean the accent colour. Use Err for errors.
 object LColors {
-    val Bg = Color(0xFF121117)
-    val Surface = Color(0xFF1C1A24)
-    val Surface2 = Color(0xFF26232F)
-    val Surface3 = Color(0xFF353141)
-    val Line = Color(0xFF2D2A38)
-    val Text = Color(0xFFF5F4FA)
-    val Text2 = Color(0xFFBDBACB)
-    val Text3 = Color(0xFF8F8C9E)
+    val Bg = Color(0xFF121214)
+    val Surface = Color(0xFF1B1B1F)
+    val Surface2 = Color(0xFF252529)
+    val Surface3 = Color(0xFF343439)
+    val Line = Color(0xFF2B2B30)
+    val Text = Color(0xFFF4F4F5)
+    val Text2 = Color(0xFFBDBDC4)
+    val Text3 = Color(0xFF908F98)
     val Accent = Color(0xFFF41717)
     val AccentDark = Color(0xFFB80F0F)
     val AccentSoft = Color(0x33F41717)
@@ -61,27 +63,30 @@ private val Scheme = darkColorScheme(
 private val Sans = FontFamily.SansSerif
 
 private val LTypography = Typography(
-    displaySmall = TextStyle(fontFamily = Sans, fontWeight = FontWeight.ExtraBold, fontSize = 32.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp),
-    headlineMedium = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 30.sp, letterSpacing = (-0.3).sp),
-    headlineSmall = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Bold, fontSize = 22.sp, lineHeight = 26.sp),
-    titleLarge = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Bold, fontSize = 20.sp, lineHeight = 24.sp),
+    displaySmall = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 32.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp),
+    headlineMedium = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 26.sp, lineHeight = 30.sp, letterSpacing = (-0.3).sp),
+    headlineSmall = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 26.sp),
+    titleLarge = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 24.sp),
     titleMedium = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 20.sp),
     titleSmall = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 18.sp),
     bodyLarge = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),
     bodyMedium = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 20.sp),
     bodySmall = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 16.sp),
-    labelLarge = TextStyle(fontFamily = Sans, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
-    labelMedium = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 12.sp, letterSpacing = 0.4.sp),
-    labelSmall = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 10.sp, letterSpacing = 0.6.sp),
+    labelLarge = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 20.sp),
+    labelMedium = TextStyle(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp),
+    labelSmall = TextStyle(fontFamily = Sans, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 16.sp),
 )
 
 private val LShapes = Shapes(
     small = RoundedCornerShape(10.dp),
     medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
+    large = RoundedCornerShape(20.dp),
 )
 
 @Composable
 fun LeestnTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = Scheme, typography = LTypography, shapes = LShapes, content = content)
+    // without this, text outside a Surface (the onboarding screen) falls back to black
+    MaterialTheme(colorScheme = Scheme, typography = LTypography, shapes = LShapes) {
+        CompositionLocalProvider(LocalContentColor provides LColors.Text, content = content)
+    }
 }

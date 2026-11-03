@@ -24,6 +24,9 @@ object FeedReader {
     /** [baseUrl] is the feed's own address, used to complete relative image addresses. */
     fun read(input: InputStream, baseUrl: String = ""): ParsedFeed {
         val p = Xml.newPullParser()
+        // Android turns namespaces on here, which strips "itunes:image" down to "image". The tag checks below use the
+        // whole name, and with this off a feed that forgot to declare a prefix no longer fails to parse.
+        p.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
         p.setInput(input, null)
 
         var depth = 0

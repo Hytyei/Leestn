@@ -26,7 +26,7 @@ fun SideLabel(vm: AppViewModel, ep: Episode, modifier: Modifier = Modifier) {
                 side && counted -> "Side episode. Counted in the show rating because you asked for that."
                 side && vm.sideSuggested(ep) -> "This looks like a trailer or teaser, so it is left out of the show rating."
                 side -> "Side episode. Left out of the show rating and the rating graph."
-                else -> "Counts towards the show rating."
+                else -> "Counts towards the show rating"
             },
             style = MaterialTheme.typography.bodySmall, color = LColors.Text3,
         )

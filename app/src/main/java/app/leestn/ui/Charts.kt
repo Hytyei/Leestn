@@ -78,7 +78,7 @@ fun BarChart(
                     drawLine(c, Offset(0f, size.height / 2f), Offset(size.width, size.height / 2f), 1f)
                     drawLine(LColors.Surface3, Offset(0f, size.height), Offset(size.width, size.height), 2f)
                 },
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 values.forEachIndexed { i, v ->
                     Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -97,7 +97,7 @@ fun BarChart(
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 labels.forEach {
                     Text(it, modifier = Modifier.weight(1f), fontSize = 10.sp, color = LColors.Text3, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }

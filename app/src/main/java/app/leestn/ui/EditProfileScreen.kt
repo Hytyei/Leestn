@@ -57,7 +57,7 @@ fun EditProfileScreen(vm: AppViewModel, onBack: () -> Unit) {
                 if (vm.avatarFile != null) ActionPill("Remove", Icons.Rounded.Delete) { vm.setAvatar(null) }
             }
         }
-        Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(28.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().card(16.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (vm.connected) Text("@${vm.serverHandle}", style = MaterialTheme.typography.labelMedium, color = LColors.Text3)
             OutlinedTextField(
                 value = name, onValueChange = { name = it.take(40); saved = false }, singleLine = true, modifier = Modifier.fillMaxWidth(),

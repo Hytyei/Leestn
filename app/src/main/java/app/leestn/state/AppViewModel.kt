@@ -573,7 +573,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
             val frac = if (ep.durationSec > 0) secs.toFloat() / ep.durationSec else 0f
             WItem(ep.id, ep.title, Catalog.show(ep.pid)?.name ?: "", art(ep), (Catalog.show(ep.pid)?.name ?: "") + " · " + Dates.clock(secs) + " in", frac, maxOf(0, (ep.durationSec - secs) / 60))
         }.take(5)
-        val fresh = subs.flatMap { pid -> Catalog.show(pid)?.eps?.take(6) ?: emptyList() }
+        val fresh = subs.flatMap { pid -> Catalog.show(pid)?.eps?.sortedByDescending { it.date }?.take(6) ?: emptyList() }
             .filter { log[it.id]?.d == null && it.audioUrl.isNotBlank() }
             .sortedByDescending { it.date }
             .take(8)
