@@ -23,8 +23,8 @@ android {
         applicationId = "app.leestn"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "1.7.1"
+        versionCode = 28
+        versionName = "1.7.2"
         // the runner built into Android, so device tests need no extra libraries
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
     }

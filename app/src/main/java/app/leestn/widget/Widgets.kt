@@ -6,6 +6,13 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -138,6 +145,32 @@ private fun Pill(label: String, action: Action) {
 }
 
 /** What a widget shows when nothing is playing: something worth starting instead of an empty box. */
+/**
+ * The widget's data, reloaded whenever the app writes a new snapshot. While a widget's session is open, Glance answers
+ * an update by re-running the composition, not provideGlance, so anything read once before provideContent would stay
+ * stale. After an upgrade that kept the old covers on screen until the session happened to end.
+ */
+@Composable
+private fun <T> fresh(v0: Int, first: T, load: suspend () -> T): T {
+    val version by WidgetStore.version.collectAsState()
+    var data by remember { mutableStateOf(first) }
+    var loaded by remember { mutableIntStateOf(v0) }
+    LaunchedEffect(version) {
+        if (version != loaded) {
+            val v = version
+            data = load()
+            loaded = v
+        }
+    }
+    return data
+}
+
+private data class NowData(val now: WNow?, val sug: Pair<String, WItem>?, val art: Bitmap?, val tint: Int)
+private data class MiniData(val now: WNow?, val sug: Pair<String, WItem>?, val title: String, val show: String, val art: Bitmap?, val tint: Int)
+/** [flag] is "resuming" for Continue and "has new episodes" for New episodes; [art] holds raw covers or finished ones. */
+private data class ListData(val flag: Boolean, val list: List<WItem>, val art: Map<String, Bitmap?>, val tints: Map<String, Int>, val base: Int)
+private data class LastData(val last: WLast?, val art: Bitmap?, val tint: Int)
+
 private fun suggestion(s: WSnapshot): Pair<String, WItem>? =
     s.cont.firstOrNull()?.let { "Resume" to it } ?: s.fresh.firstOrNull()?.let { "New" to it }
 
@@ -200,15 +233,20 @@ private val fwd30 get() = actionRunCallback<ForwardAction>()
 class NowPlayingWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
+    private suspend fun load(context: Context): NowData {
         val snap = WidgetStore.read(context)
         val now = snap.now
         val sug = if (now == null) suggestion(snap) else null
-        val artUrl = now?.art ?: sug?.second?.art ?: ""
-        val art = WidgetArt.bitmap(context, artUrl, 400)
-        val tint = WidgetArt.tint(art)
+        val art = WidgetArt.bitmap(context, now?.art ?: sug?.second?.art ?: "", 400)
+        return NowData(now, sug, art, WidgetArt.tint(art))
+    }
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
         val d = context.resources.displayMetrics.density
+        val v0 = WidgetStore.version.value
+        val first = load(context)
         provideContent {
+            val (now, sug, art, tint) = fresh(v0, first) { load(context) }
             val size = LocalSize.current
             val pad = 12.dp
             val artSize = if (size.height - pad * 2 < size.width * 0.42f) size.height - pad * 2 else size.width * 0.42f
@@ -283,16 +321,20 @@ class NowPlayingReceiver : GlanceAppWidgetReceiver() {
 class MiniPlayerWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
+    private suspend fun load(context: Context): MiniData {
         val snap = WidgetStore.read(context)
         val now = snap.now
         val sug = if (now == null) suggestion(snap) else null
-        val title = now?.title ?: sug?.second?.title ?: "Nothing playing"
-        val show = now?.show ?: sug?.second?.show ?: ""
         val art = WidgetArt.bitmap(context, now?.art ?: sug?.second?.art ?: "", 500)
-        val tint = WidgetArt.tint(art)
+        return MiniData(now, sug, now?.title ?: sug?.second?.title ?: "Nothing playing", now?.show ?: sug?.second?.show ?: "", art, WidgetArt.tint(art))
+    }
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
         val d = context.resources.displayMetrics.density
+        val v0 = WidgetStore.version.value
+        val first = load(context)
         provideContent {
+            val (now, sug, title, show, art, tint) = fresh(v0, first) { load(context) }
             val size = LocalSize.current
             val full = WidgetArt.roundedCrop(art, size.width.value, size.height.value, 28f, d, tint)
             val scrim = WidgetArt.scrim(size.width.value, size.height.value, 28f, tint, d)
@@ -332,15 +374,21 @@ class MiniPlayerReceiver : GlanceAppWidgetReceiver() {
 class ContinueWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
+    private suspend fun load(context: Context): ListData {
         val snap = WidgetStore.read(context)
         val resuming = snap.cont.isNotEmpty()
         val list = (if (resuming) snap.cont else snap.fresh).take(6)
         val art = list.associate { it.id to WidgetArt.bitmap(context, it.art, 300) }
         val tints = list.associate { it.id to WidgetArt.tint(art[it.id]) }
-        val base = list.firstOrNull()?.let { tints[it.id] } ?: WidgetArt.RED
+        return ListData(resuming, list, art, tints, list.firstOrNull()?.let { tints[it.id] } ?: WidgetArt.RED)
+    }
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
         val d = context.resources.displayMetrics.density
+        val v0 = WidgetStore.version.value
+        val first = load(context)
         provideContent {
+            val (resuming, list, art, tints, base) = fresh(v0, first) { load(context) }
             val size = LocalSize.current
             val pad = 12.dp
             val gap = 8.dp
@@ -399,16 +447,22 @@ class ContinueReceiver : GlanceAppWidgetReceiver() {
 class NewEpisodesWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
+    private suspend fun load(context: Context, d: Float): ListData {
         val snap = WidgetStore.read(context)
         val isNew = snap.fresh.isNotEmpty()
         val list = snap.fresh.ifEmpty { snap.cont }
-        val d = context.resources.displayMetrics.density
         val raw = list.associate { it.id to WidgetArt.bitmap(context, it.art, 160) }
         val tints = list.associate { it.id to WidgetArt.tint(raw[it.id]) }
         val covers = list.associate { it.id to WidgetArt.roundedCrop(raw[it.id], 52f, 52f, 12f, d, tints.getValue(it.id)) }
-        val base = list.firstOrNull()?.let { tints[it.id] } ?: WidgetArt.RED
+        return ListData(isNew, list, covers, tints, list.firstOrNull()?.let { tints[it.id] } ?: WidgetArt.RED)
+    }
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val d = context.resources.displayMetrics.density
+        val v0 = WidgetStore.version.value
+        val first = load(context, d)
         provideContent {
+            val (isNew, list, covers, tints, base) = fresh(v0, first) { load(context, d) }
             val size = LocalSize.current
             val bg = WidgetArt.backdrop(size.width.value, size.height.value, 28f, base, d, 0.3f)
             Box(GlanceModifier.fillMaxSize()) {
@@ -419,7 +473,7 @@ class NewEpisodesWidget : GlanceAppWidget() {
                         if (isNew) {
                             Spacer(GlanceModifier.width(6.dp))
                             Box(GlanceModifier.background(ImageProvider(R.drawable.widget_chip)).padding(horizontal = 7.dp, vertical = 1.dp), contentAlignment = Alignment.Center) {
-                                Text("${snap.fresh.size}", style = TextStyle(color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Bold))
+                                Text("${list.size}", style = TextStyle(color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Bold))
                             }
                         }
                         Spacer(GlanceModifier.defaultWeight())
@@ -438,7 +492,7 @@ class NewEpisodesWidget : GlanceAppWidget() {
                                             .clickable(open(context, "ep:${item.id}")),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Art(covers.getValue(item.id), 52.dp)
+                                        covers[item.id]?.let { Art(it, 52.dp) }
                                         Spacer(GlanceModifier.width(10.dp))
                                         Column(GlanceModifier.defaultWeight()) {
                                             Text(item.show.ifBlank { "Podcast" }, maxLines = 1, style = TextStyle(color = soft(tints.getValue(item.id)), fontSize = 10.sp, fontWeight = FontWeight.Bold))
@@ -471,10 +525,16 @@ class NewEpisodesReceiver : GlanceAppWidgetReceiver() {
 class StatsWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
+    private suspend fun load(context: Context): WStats? {
+        return WidgetStore.read(context).stats
+    }
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val st = WidgetStore.read(context).stats
         val d = context.resources.displayMetrics.density
+        val v0 = WidgetStore.version.value
+        val first = load(context)
         provideContent {
+            val st = fresh(v0, first) { load(context) }
             val size = LocalSize.current
             val wide = size.width >= 220.dp
             val chartH = if (size.height >= 150.dp) 46.dp else 28.dp
@@ -560,12 +620,18 @@ class StatsReceiver : GlanceAppWidgetReceiver() {
 class LastActivityWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
+    private suspend fun load(context: Context): LastData {
         val last = WidgetStore.read(context).last
         val art = WidgetArt.bitmap(context, last?.art ?: "", 400)
-        val tint = WidgetArt.tint(art)
+        return LastData(last, art, WidgetArt.tint(art))
+    }
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
         val d = context.resources.displayMetrics.density
+        val v0 = WidgetStore.version.value
+        val first = load(context)
         provideContent {
+            val (last, art, tint) = fresh(v0, first) { load(context) }
             val size = LocalSize.current
             val pad = 12.dp
             val coverRaw = size.height - pad * 2

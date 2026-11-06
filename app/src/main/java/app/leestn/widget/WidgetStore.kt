@@ -13,6 +13,7 @@ import android.graphics.Shader
 import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.drawable.toBitmap
 import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.flow.MutableStateFlow
 import coil.Coil
 import coil.request.ImageRequest
 import coil.request.SuccessResult
@@ -39,6 +40,9 @@ data class WSnapshot(val now: WNow?, val cont: List<WItem>, val fresh: List<WIte
 
 object WidgetStore {
     private const val PREFS = "leestn_widget"
+
+    /** Goes up on every write, so a widget whose session is still open reloads instead of redrawing old data. */
+    val version = MutableStateFlow(0)
 
     fun read(ctx: Context): WSnapshot {
         val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("snap", null)
@@ -94,6 +98,7 @@ object WidgetStore {
                 .put("showEps", it.showEps).put("showMin", it.showMin).put("rating", it.rating).put("showAvg", it.showAvg).put("streak", it.streak))
         }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("snap", j.toString()).apply()
+        version.value = version.value + 1
     }
 
     suspend fun publish(ctx: Context, s: WSnapshot) {
